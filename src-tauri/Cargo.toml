@@ -1,0 +1,19 @@
+[package]
+name = "oaki-widget"
+version = "0.1.0"
+description = "Oaki Studio Desktop Widget"
+authors = ["Oaki Studio"]
+edition = "2021"
+
+[lib]
+# lib name must differ from bin name to avoid Windows linker conflicts
+name = "oaki_widget_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

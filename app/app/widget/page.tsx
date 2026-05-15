@@ -1,0 +1,67 @@
+// @ts-nocheck
+import { createClient } from '@/lib/supabase/server'
+import { redirect } from 'next/navigation'
+import { WidgetClient } from '@/components/widget/WidgetClient'
+import { ensureUserProfile } from '@/lib/utils/ensure-profile'
+
+export default async function WidgetPage() {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/auth/login')
+
+  await ensureUserProfile(supabase, user)
+
+  const [
+    { data: projects, error: projectsError },
+    { data: currentUser },
+  ] = await Promise.all([
+    supabase
+      .from('projects')
+      .select('id, name, status, delivery_date, delivery_time_window, current_round_number, view_count, clients ( name )')
+      .not('status', 'eq', 'archived')
+      .order('name'),
+    supabase
+      .from('users')
+      .select('id, name, role')
+      .eq('id', user.id)
+      .single(),
+  ])
+
+  return (
+    <div className="min-h-screen bg-canvas flex flex-col">
+      {/* Top bar */}
+      <header className="border-b border-line shrink-0">
+        <div className="max-w-[460px] mx-auto px-6 h-11 flex items-center justify-between">
+          <span className="text-[11px] tracking-[0.15em] uppercase text-ink-3">Oaki Studio</span>
+          <div className="flex items-center gap-4">
+            <span className="text-[12px] text-ink-2">{currentUser?.name ?? user.email}</span>
+            {currentUser?.role === 'admin' && (
+              <a
+                href="/admin/projects"
+                className="text-[11px] text-ink-3 hover:text-ink-2 transition-colors tracking-wide"
+              >
+                Admin →
+              </a>
+            )}
+          </div>
+        </div>
+      </header>
+
+      {/* Content */}
+      <main className="flex-1 max-w-[460px] w-full mx-auto px-6 py-8">
+        {projectsError && (
+          <div className="mb-6 p-3 bg-blocked-bg border border-blocked-text/20 rounded-md">
+            <p className="text-[11px] text-blocked-text font-medium mb-1">Database error</p>
+            <p className="text-[11px] text-ink-2 font-mono">{projectsError.message}</p>
+          </div>
+        )}
+
+        <WidgetClient
+          projects={projects ?? []}
+          userId={user.id}
+          hasError={!!projectsError}
+        />
+      </main>
+    </div>
+  )
+}

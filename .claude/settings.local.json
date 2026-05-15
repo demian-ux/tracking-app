@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir \"C:\\\\Users\\\\dszkl\\\\tracking-app\")",
+      "Bash(npx create-next-app@latest . --typescript --tailwind --eslint --app --src-dir=false --import-alias=\"@/*\" --no-git)",
+      "Bash(npx create-next-app@latest _scaffold --typescript --tailwind --eslint --app --src-dir=false --import-alias=\"@/*\" --no-git)",
+      "Bash(npx create-next-app@latest scaffold --typescript --tailwind --eslint --app --src-dir=false --import-alias=\"@/*\" --no-git)",
+      "Bash(mkdir -p \"C:\\\\Users\\\\dszkl\\\\tracking-app\\\\app\\\\admin\\\\projects\\\\[id]\" 2>&1)",
+      "Bash(npx tsc *)",
+      "Bash(npm run *)",
+      "Bash(npx kill-port *)",
+      "Bash(rustc --version)",
+      "Bash(cargo --version)",
+      "PowerShell(rustc --version 2>&1)",
+      "PowerShell(cargo --version 2>&1)",
+      "Bash(npm install *)",
+      "Bash(node scripts/generate-placeholder-icon.mjs)",
+      "PowerShell($env:PATH = $env:PATH + \";$env:USERPROFILE\\\\.cargo\\\\bin\"; rustc --version; cargo --version)",
+      "Bash(curl -s -o /dev/null -w \"Next.js status: %{http_code}\\\\n\" http://localhost:3000)",
+      "Bash(export PATH=\"$PATH:/c/Users/dszkl/.cargo/bin\")",
+      "Bash(git init *)",
+      "Bash(git remote *)",
+      "Bash(git add *)"
+    ]
+  }
+}
