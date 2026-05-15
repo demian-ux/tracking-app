@@ -56,6 +56,15 @@ export default async function WidgetPage() {
           </div>
         )}
 
+        {!currentUser && !projectsError && (
+          <div className="mb-6 p-3 bg-blocked-bg border border-blocked-text/20 rounded-md">
+            <p className="text-[11px] text-blocked-text font-medium mb-1">Profile not set up</p>
+            <p className="text-[11px] text-ink-2">
+              Your account exists but has no profile row. Run migration 005 in the Supabase SQL editor to fix this.
+            </p>
+          </div>
+        )}
+
         <WidgetClient
           projects={projects ?? []}
           userId={user.id}
