@@ -1,4 +1,4 @@
-import type { Database, StageType, TimeWindow, ProjectStatus } from './database'
+import type { Database, StageType, TimeWindow, ProjectStatus, ClientStatus } from './database'
 
 export type User = Database['public']['Tables']['users']['Row']
 export type Client = Database['public']['Tables']['clients']['Row']
@@ -92,6 +92,12 @@ export const BLOCK_REASONS = [
 ] as const
 
 export type BlockReason = typeof BLOCK_REASONS[number]
+
+export const CLIENT_STATUS_LABELS: Record<ClientStatus, string> = {
+  active:   'Active',
+  inactive: 'Inactive',
+  archived: 'Archived',
+}
 
 export function roundLabel(n: number): string {
   return `Round ${String(n).padStart(2, '0')}`

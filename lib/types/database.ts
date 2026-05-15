@@ -7,6 +7,7 @@ export type Json =
   | Json[]
 
 export type UserRole = 'admin' | 'team_member' | 'client'
+export type ClientStatus = 'active' | 'inactive' | 'archived'
 export type ProjectStatus =
   | 'waiting_for_info'
   | 'ready_to_start'
@@ -74,19 +75,33 @@ export interface Database {
           name: string
           contact_name: string | null
           contact_email: string | null
+          phone: string | null
+          website: string | null
+          notes: string | null
+          status: ClientStatus
           created_at: string
+          updated_at: string
         }
         Insert: {
           id?: string
           name: string
           contact_name?: string | null
           contact_email?: string | null
+          phone?: string | null
+          website?: string | null
+          notes?: string | null
+          status?: ClientStatus
           created_at?: string
+          updated_at?: string
         }
         Update: {
           name?: string
           contact_name?: string | null
           contact_email?: string | null
+          phone?: string | null
+          website?: string | null
+          notes?: string | null
+          status?: ClientStatus
         }
       }
       projects: {
