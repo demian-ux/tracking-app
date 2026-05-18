@@ -2,7 +2,6 @@ import { createClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { ProjectBadge, StageBadge } from '@/components/ui/Badge'
-import { ProgressBar } from '@/components/ui/ProgressBar'
 import { calculateProgress } from '@/lib/utils/progress'
 import { formatDelivery, roundLabel } from '@/lib/utils/formatting'
 import { ProjectDetailClient } from '@/components/admin/ProjectDetailClient'
@@ -82,26 +81,12 @@ export default async function ProjectDetailPage({ params }: Props) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div className="bg-surface border border-line rounded-md p-4">
-          <div className="text-[10px] tracking-[0.12em] uppercase text-ink-3 mb-2">Delivery</div>
-          <div className="text-[13px] text-ink">
-            {formatDelivery(project.delivery_date, project.delivery_time_window)}
-          </div>
-        </div>
-        <div className="bg-surface border border-line rounded-md p-4">
-          <div className="text-[10px] tracking-[0.12em] uppercase text-ink-3 mb-2">Progress</div>
-          <div className="mt-1">
-            <ProgressBar value={progress} />
-          </div>
-        </div>
-      </div>
-
       <ProjectDetailClient
         project={project}
         viewRounds={viewRounds ?? []}
         stageStates={stageStates ?? []}
         views={views ?? []}
+        progress={progress}
       />
 
       {views && views.length > 0 && (
