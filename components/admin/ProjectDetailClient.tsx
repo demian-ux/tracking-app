@@ -3,7 +3,7 @@
 import { useState, useTransition } from 'react'
 import { markDeliverySent, createRevisionRound } from '@/lib/actions/delivery'
 import type { IncompleteItem } from '@/lib/actions/delivery'
-import { updateProjectDates, updateProjectStatus } from '@/lib/actions/projects'
+import { updateProjectDates, updateProjectStatus, updateProjectViewCount } from '@/lib/actions/projects'
 import { unblockStage } from '@/lib/actions/stages'
 import type { Project, DeliveryRound } from '@/lib/types/app'
 import type { TimeWindow, StageType } from '@/lib/types/database'
@@ -43,6 +43,9 @@ export function ProjectDetailClient({ project, rounds, activeRound, stageStates,
   const [confirmDelivery, setConfirmDelivery] = useState(false)
   const [showEditDates, setShowEditDates] = useState(false)
   const [showStatusPicker, setShowStatusPicker] = useState(false)
+  const [showEditViews, setShowEditViews] = useState(false)
+  const [newViewCount, setNewViewCount] = useState(project.view_count)
+  const [viewError, setViewError] = useState<string | null>(null)
 
   const [deliveryDate, setDeliveryDate] = useState(project.delivery_date ?? '')
   const [deliveryWindow, setDeliveryWindow] = useState<TimeWindow | ''>(project.delivery_time_window ?? '')
@@ -97,6 +100,18 @@ export function ProjectDetailClient({ project, rounds, activeRound, stageStates,
       const result = await updateProjectStatus(project.id, status)
       if (result.error) setFeedback(result.error)
       else { setFeedback(null); setShowStatusPicker(false) }
+    })
+  }
+
+  function handleSaveViewCount() {
+    setViewError(null)
+    startTransition(async () => {
+      const result = await updateProjectViewCount(project.id, newViewCount)
+      if (result.error) {
+        setViewError(result.error)
+      } else {
+        setShowEditViews(false)
+      }
     })
   }
 
@@ -177,6 +192,41 @@ export function ProjectDetailClient({ project, rounds, activeRound, stageStates,
           </div>
         ) : (
           <span className="text-[13px] text-ink">{PROJECT_STATUS_LABELS[project.status] ?? project.status}</span>
+        )}
+      </div>
+
+      {/* Views */}
+      <div className="bg-surface border border-line rounded-md p-4">
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-[10px] tracking-[0.12em] uppercase text-ink-3">Views</span>
+          <button
+            onClick={() => { setShowEditViews(v => !v); setViewError(null); setNewViewCount(project.view_count) }}
+            className="text-[11px] text-ink-3 hover:text-ink-2 transition-colors"
+          >
+            {showEditViews ? 'Cancel' : 'Edit'}
+          </button>
+        </div>
+        {showEditViews ? (
+          <div className="space-y-2">
+            <input
+              type="number"
+              min={1}
+              max={99}
+              value={newViewCount}
+              onChange={e => setNewViewCount(parseInt(e.target.value) || 1)}
+              className="w-28 px-2.5 py-2 bg-canvas border border-line rounded-md text-[13px] text-ink focus:outline-none focus:border-accent transition-colors [color-scheme:dark]"
+            />
+            {viewError && <p className="text-[12px] text-blocked-text">{viewError}</p>}
+            <button
+              onClick={handleSaveViewCount}
+              disabled={isPending || newViewCount === project.view_count}
+              className="w-full py-1.5 bg-accent text-canvas text-[12px] font-medium rounded-md hover:bg-accent-dim disabled:opacity-40 transition-colors"
+            >
+              Save
+            </button>
+          </div>
+        ) : (
+          <span className="text-[13px] text-ink">{project.view_count} views</span>
         )}
       </div>
 
