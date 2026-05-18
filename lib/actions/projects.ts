@@ -140,6 +140,50 @@ export async function archiveProject(projectId: string) {
 
   revalidatePath('/admin/projects')
   revalidatePath(`/admin/projects/${projectId}`)
+  revalidatePath('/app/widget')
+  return { data: true }
+}
+
+export async function deleteProjectPermanently(projectId: string) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  const { data: actor } = await supabase.from('users').select('role').eq('id', user.id).single()
+  if (actor?.role !== 'admin') return { error: 'Forbidden' }
+
+  const { data: project, error: projectError } = await supabase
+    .from('projects')
+    .select('id, name')
+    .eq('id', projectId)
+    .single()
+
+  if (projectError || !project) return { error: projectError?.message ?? 'Project not found' }
+
+  await supabase.from('project_events').insert({
+    project_id: projectId,
+    actor_id: user.id,
+    event_type: 'project_archived',
+    payload: { action: 'delete_permanently_requested', project_name: project.name },
+  })
+
+  const deleteSteps = [
+    supabase.from('stage_events').delete().eq('project_id', projectId),
+    supabase.from('project_events').delete().eq('project_id', projectId),
+    supabase.from('view_stage_states').delete().eq('project_id', projectId),
+    supabase.from('delivery_rounds').delete().eq('project_id', projectId),
+    supabase.from('project_views').delete().eq('project_id', projectId),
+    supabase.from('projects').delete().eq('id', projectId),
+  ]
+
+  for (const step of deleteSteps) {
+    const { error } = await step
+    if (error) return { error: error.message }
+  }
+
+  revalidatePath('/admin/projects')
+  revalidatePath(`/admin/projects/${projectId}`)
+  revalidatePath('/app/widget')
   return { data: true }
 }
 

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useTransition } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { startStage, finishStage, blockStage } from '@/lib/actions/stages'
+import { startStage, finishStage, blockStage, ensureProjectWorkflow } from '@/lib/actions/stages'
 import type { StageType, TimeWindow } from '@/lib/types/database'
 import { STAGE_LABELS, STAGE_ORDER, TIME_WINDOWS, BLOCK_REASONS, roundLabel } from '@/lib/types/app'
 import { formatDelivery } from '@/lib/utils/formatting'
@@ -82,19 +82,21 @@ export function WidgetClient({ projects, userId, hasError }: WidgetClientProps) 
     if (!projectId) return
     let ignore = false
     ;(async () => {
-      const [{ data: v }, { data: r }] = await Promise.all([
+      const [{ data: v }, workflow] = await Promise.all([
         supabase.from('project_views').select('*').eq('project_id', projectId).eq('active', true).order('number'),
-        supabase.from('delivery_rounds').select('*').eq('project_id', projectId).in('status', ['active', 'ready_for_admin_review']).order('round_number', { ascending: false }).limit(1),
+        ensureProjectWorkflow(projectId),
       ])
       if (ignore) return
       setViews(v ?? [])
-      const activeRound = r?.[0] ?? null
-      setRound(activeRound)
-      if (activeRound) {
-        const { data: s } = await supabase.from('view_stage_states').select('*').eq('delivery_round_id', activeRound.id)
-        if (ignore) return
-        setStates(s ?? [])
+      if (workflow.error) {
+        setRound(null)
+        setStates([])
+        setFeedback({ ok: false, msg: workflow.error })
+      } else if (workflow.data) {
+        setRound(workflow.data.round)
+        setStates(workflow.data.states ?? [])
       } else {
+        setRound(null)
         setStates([])
       }
     })()
@@ -139,13 +141,13 @@ export function WidgetClient({ projects, userId, hasError }: WidgetClientProps) 
     ? Math.round(states.filter(s => s.status === 'done').length / states.length * 100)
     : 0
 
-  // Determine which actions are relevant based on selected view states
   const selectedStates = selectedViewIds.map(id => getState(id, stage as StageType)).filter(Boolean)
   const anyInProgress = selectedStates.some(s => s?.status === 'in_progress')
   const canBlock = anyInProgress && selectedViewIds.length > 0 && !!stage
+  const canAct = !!projectId && !!stage && selectedViewIds.length > 0
 
   function handleStart() {
-    if (!projectId || !stage || !selectedViewIds.length || !round) return
+    if (!canAct || !round) return
     setFeedback(null)
     startTransition(async () => {
       const result = await startStage({
@@ -388,14 +390,14 @@ export function WidgetClient({ projects, userId, hasError }: WidgetClientProps) 
         <div className="flex gap-2 pt-1">
           <button
             onClick={handleStart}
-            disabled={isPending || !round}
+            disabled={isPending || !canAct || !round}
             className="flex-1 h-9 bg-accent text-canvas text-[13px] font-medium rounded-md hover:bg-accent-dim disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             {isPending ? '…' : 'Start stage'}
           </button>
           <button
             onClick={handleFinish}
-            disabled={isPending || !round}
+            disabled={isPending || !canAct || !round}
             className="flex-1 h-9 bg-surface text-ink text-[13px] border border-line-strong rounded-md hover:bg-elevated disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             {isPending ? '…' : 'Mark done'}
