@@ -3,7 +3,7 @@
 import { revalidateProjectScreens } from '@/lib/utils/revalidate'
 import { requireWorker, requireAdmin } from '@/lib/actions/auth'
 import type { StartStageInput, FinishStageInput, ProjectViewRound } from '@/lib/types/app'
-import { STAGE_ORDER } from '@/lib/types/app'
+import { STAGE_ORDER, STAGE_LABELS } from '@/lib/types/app'
 import type { StageType } from '@/lib/types/database'
 
 export async function ensureProjectWorkflow(projectId: string) {
@@ -118,7 +118,7 @@ export async function ensureProjectWorkflow(projectId: string) {
 export async function startStage(input: StartStageInput) {
   const auth = await requireWorker()
   if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
-  const { user, supabase } = auth.data
+  const { user, profile, supabase } = auth.data
 
   // Find the active round for each selected view
   const { data: activeRounds } = await supabase
@@ -133,6 +133,24 @@ export async function startStage(input: StartStageInput) {
   }
 
   const roundIds = activeRounds.map(r => r.id)
+
+  // Sequential stage enforcement — team members cannot skip stages
+  if (profile.role !== 'admin') {
+    const idx = STAGE_ORDER.indexOf(input.stage)
+    if (idx > 0) {
+      const prevStage = STAGE_ORDER[idx - 1]
+      const { data: prevStates } = await supabase
+        .from('view_stage_states')
+        .select('project_view_id, status')
+        .in('project_view_round_id', roundIds)
+        .in('project_view_id', input.viewIds)
+        .eq('stage', prevStage)
+      const notReady = (prevStates ?? []).filter(s => s.status !== 'done')
+      if (notReady.length > 0) {
+        return { error: `Finish ${STAGE_LABELS[prevStage as StageType]} first` }
+      }
+    }
+  }
 
   const { data: currentStates } = await supabase
     .from('view_stage_states')
