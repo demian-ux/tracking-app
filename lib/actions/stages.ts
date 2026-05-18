@@ -234,3 +234,48 @@ export async function reopenStage(
   revalidatePath(`/admin/projects/${projectId}`)
   return { data: true }
 }
+
+// Creates a delivery round + view_stage_states for a project that is missing one.
+// Recovers projects where the round insert failed mid-flight during creation.
+export async function initializeRound(projectId: string) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  const { data: actor } = await supabase.from('users').select('role').eq('id', user.id).single()
+  if (actor?.role !== 'admin') return { error: 'Forbidden' }
+
+  const { data: views, error: viewsError } = await supabase
+    .from('project_views')
+    .select('id')
+    .eq('project_id', projectId)
+    .eq('active', true)
+
+  if (viewsError || !views?.length) return { error: 'No views found for this project.' }
+
+  const { data: round, error: roundError } = await supabase
+    .from('delivery_rounds')
+    .insert({ project_id: projectId, round_number: 0, status: 'active' })
+    .select()
+    .single()
+
+  if (roundError || !round) return { error: roundError?.message ?? 'Failed to create round.' }
+
+  const { STAGE_ORDER } = await import('@/lib/types/app')
+  const states = views.flatMap(view =>
+    STAGE_ORDER.map(stage => ({
+      project_id: projectId,
+      delivery_round_id: round.id,
+      project_view_id: view.id,
+      stage,
+      status: 'not_started' as const,
+    }))
+  )
+
+  const { error: statesError } = await supabase.from('view_stage_states').insert(states)
+  if (statesError) return { error: statesError.message }
+
+  revalidatePath('/app/widget')
+  revalidatePath(`/admin/projects/${projectId}`)
+  return { data: round }
+}

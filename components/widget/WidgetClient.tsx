@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useTransition } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { startStage, finishStage, blockStage } from '@/lib/actions/stages'
+import { startStage, finishStage, blockStage, initializeRound } from '@/lib/actions/stages'
 import type { StageType, TimeWindow } from '@/lib/types/database'
 import { STAGE_LABELS, STAGE_ORDER, TIME_WINDOWS, BLOCK_REASONS, roundLabel } from '@/lib/types/app'
 import { formatDelivery } from '@/lib/utils/formatting'
@@ -44,6 +44,7 @@ interface Round {
 interface WidgetClientProps {
   projects: Project[]
   userId: string
+  isAdmin?: boolean
   hasError?: boolean
 }
 
@@ -56,7 +57,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   )
 }
 
-export function WidgetClient({ projects, userId, hasError }: WidgetClientProps) {
+export function WidgetClient({ projects, userId, isAdmin, hasError }: WidgetClientProps) {
   const supabase = useMemo(() => createClient(), [])
   const [isPending, startTransition] = useTransition()
 
@@ -386,19 +387,64 @@ export function WidgetClient({ projects, userId, hasError }: WidgetClientProps) 
         </p>
       )}
 
+      {/* Missing round warning */}
+      {projectId && views.length > 0 && !round && (
+        <div className="p-3 bg-blocked-bg border border-blocked-text/20 rounded-md">
+          <p className="text-[11px] text-blocked-text font-medium mb-1">Project not initialised</p>
+          <p className="text-[11px] text-ink-2 mb-2">
+            This project has no active delivery round. Stages cannot be started until one is created.
+          </p>
+          {isAdmin && (
+            <button
+              onClick={() => {
+                startTransition(async () => {
+                  const result = await initializeRound(projectId)
+                  if (result.error) {
+                    setFeedback({ ok: false, msg: result.error as string })
+                  } else {
+                    setFeedback({ ok: true, msg: 'Round initialised. You can now start stages.' })
+                    // Reload round + states
+                    const { data: r } = await supabase
+                      .from('delivery_rounds')
+                      .select('*')
+                      .eq('project_id', projectId)
+                      .in('status', ['active', 'ready_for_admin_review'])
+                      .order('round_number', { ascending: false })
+                      .limit(1)
+                    const activeRound = r?.[0] ?? null
+                    setRound(activeRound)
+                    if (activeRound) {
+                      const { data: s } = await supabase
+                        .from('view_stage_states')
+                        .select('*')
+                        .eq('delivery_round_id', activeRound.id)
+                      setStates(s ?? [])
+                    }
+                  }
+                })
+              }}
+              disabled={isPending}
+              className="px-3 py-1.5 bg-surface border border-line text-[12px] text-ink rounded-md hover:border-accent transition-colors disabled:opacity-40"
+            >
+              {isPending ? 'Initialising…' : 'Initialise round'}
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Actions */}
       {selectedViewIds.length > 0 && !showBlockPanel && (
         <div className="flex gap-2 pt-1">
           <button
             onClick={handleStart}
-            disabled={isPending}
+            disabled={isPending || !round}
             className="flex-1 h-9 bg-accent text-canvas text-[13px] font-medium rounded-md hover:bg-accent-dim disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             {isPending ? '…' : 'Start stage'}
           </button>
           <button
             onClick={handleFinish}
-            disabled={isPending}
+            disabled={isPending || !round}
             className="flex-1 h-9 bg-surface text-ink text-[13px] border border-line-strong rounded-md hover:bg-elevated disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             {isPending ? '…' : 'Mark done'}
