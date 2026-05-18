@@ -28,19 +28,20 @@ export async function ensureProjectWorkflow(projectId: string) {
 
   if (!views || views.length === 0) return { error: 'Project has no active views' }
 
-  const { data: existingRound } = await supabase
+  const { data: latestRound, error: roundError } = await supabase
     .from('delivery_rounds')
     .select('*')
     .eq('project_id', projectId)
-    .in('status', ['active', 'ready_for_admin_review'])
     .order('round_number', { ascending: false })
     .limit(1)
     .maybeSingle()
 
-  let activeRound = existingRound
+  if (roundError) return { error: roundError.message }
+
+  let activeRound = latestRound
 
   if (!activeRound) {
-    const { data: newRound, error: roundErr } = await supabase
+    const { data: newRound, error: createErr } = await supabase
       .from('delivery_rounds')
       .insert({
         project_id: projectId,
@@ -50,10 +51,23 @@ export async function ensureProjectWorkflow(projectId: string) {
       .select()
       .single()
 
-    if (roundErr || !newRound) {
-      return { error: roundErr?.message ?? 'Could not create workflow round' }
+    if (createErr || !newRound) {
+      return { error: createErr?.message ?? 'Could not create workflow round' }
     }
     activeRound = newRound
+  } else if (
+    activeRound.status !== 'active' &&
+    (project.status === 'active' || project.status === 'revision')
+  ) {
+    const { data: activated, error: activateErr } = await supabase
+      .from('delivery_rounds')
+      .update({ status: 'active' })
+      .eq('id', activeRound.id)
+      .select()
+      .single()
+
+    if (activateErr) return { error: activateErr.message }
+    activeRound = activated
   }
 
   const { data: existingStates } = await supabase

@@ -164,7 +164,7 @@ export function TimelineFilters({ projects, clients }: Props) {
 
       <div className="space-y-6">
         {filtered.map(project => {
-          const activeRound = project.delivery_rounds.find(r => r.status === 'active' || r.status === 'ready_for_admin_review')
+          const activeRound = project.delivery_rounds.find(r => r.status === 'active')
           const activeViews = project.project_views.filter(v => v.active)
           const activeStates = activeRound?.view_stage_states ?? []
           const progress = calculateProgress(activeStates)

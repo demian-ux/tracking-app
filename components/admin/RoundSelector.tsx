@@ -11,7 +11,6 @@ interface Round {
 
 const STATUS_LABELS: Record<string, string> = {
   active: 'Active',
-  ready_for_admin_review: 'Review',
   delivered: 'Delivered',
   revision_requested: 'Revision req.',
 }

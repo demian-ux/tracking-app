@@ -88,19 +88,11 @@ export async function createRevisionRound(projectId: string) {
     return { error: 'Project is not waiting for feedback or delivered' }
   }
 
-  const { data: currentRound } = await supabase
+  await supabase
     .from('delivery_rounds')
-    .select('id')
+    .update({ status: 'revision_requested' })
     .eq('project_id', projectId)
-    .eq('round_number', project.current_round_number)
-    .single()
-
-  if (currentRound) {
-    await supabase
-      .from('delivery_rounds')
-      .update({ status: 'revision_requested' })
-      .eq('id', currentRound.id)
-  }
+    .eq('status', 'active')
 
   const newRoundNumber = project.current_round_number + 1
 

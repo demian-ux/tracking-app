@@ -70,6 +70,7 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
   const [views, setViews] = useState<View[]>([])
   const [round, setRound] = useState<Round | null>(null)
   const [roundLoading, setRoundLoading] = useState(false)
+  const [workflowError, setWorkflowError] = useState<string | null>(null)
   const [states, setStates] = useState<ViewState[]>([])
   const [conflictViewIds, setConflictViewIds] = useState<string[]>([])
   const [feedback, setFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
@@ -97,6 +98,8 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
         ensureProjectWorkflow(projectId),
       ])
 
+      console.log('ensureProjectWorkflow result:', workflow)
+
       if (cancelled) return
 
       setRoundLoading(false)
@@ -109,10 +112,17 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
       setViews(viewsResult.data ?? [])
 
       if (workflow.error) {
-        setFeedback({ ok: false, msg: workflow.error })
+        setWorkflowError(workflow.error)
+        setRound(null)
+        setStates([])
       } else if (workflow.data) {
+        setWorkflowError(null)
         setRound(workflow.data.round as Round)
         setStates((workflow.data.states ?? []) as ViewState[])
+      } else {
+        setWorkflowError('Workflow returned no data.')
+        setRound(null)
+        setStates([])
       }
     }
 
@@ -229,7 +239,8 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
     if (isPending) return null
     if (!projectId) return null
     if (roundLoading) return 'Loading workflow…'
-    if (!round) return 'No active round'
+    if (workflowError) return workflowError
+    if (!round) return 'Could not load active round'
     if (!stage) return null
     if (selectedViewIds.length === 0) return null
     if (stageOrderBlock) return stageOrderBlock
@@ -341,6 +352,7 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
             setEtaDate('')
             setEtaWindow('')
             setFeedback(null)
+            setWorkflowError(null)
             setRound(null)
             setStates([])
             setViews([])
@@ -600,6 +612,7 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
           <div>stage:   {stage || '—'}</div>
           <div>views:   {selectedViewIds.length ? selectedViewIds.map(id => views.find(v => v.id === id)?.label ?? id).join(', ') : '—'}</div>
           <div>canStart: {String(canStart)} · canFinish: {String(canFinish)} · canBlock: {String(canBlock)}</div>
+          {workflowError && <div className="text-blocked-text">workflow error: {workflowError}</div>}
           {startDisabledReason && <div>start blocked: {startDisabledReason}</div>}
           {finishDisabledReason && <div>finish blocked: {finishDisabledReason}</div>}
         </div>

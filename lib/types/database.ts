@@ -25,7 +25,7 @@ export type ProjectStatus =
   | 'waiting_for_client'
 export type StageType = 'initial' | 'advanced' | 'post_production'
 export type StageStatus = 'not_started' | 'in_progress' | 'done' | 'blocked' | 'reopened'
-export type RoundStatus = 'active' | 'delivered' | 'revision_requested' | 'ready_for_admin_review'
+export type RoundStatus = 'active' | 'delivered' | 'revision_requested'
 export type TimeWindow = 'Midday' | 'Afternoon' | 'EOD'
 export type StageEventType =
   | 'stage_started'
