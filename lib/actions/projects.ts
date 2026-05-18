@@ -4,27 +4,73 @@ import { revalidatePath } from 'next/cache'
 import { revalidateProjectScreens } from '@/lib/utils/revalidate'
 import { requireAdmin } from '@/lib/actions/auth'
 import type { CreateProjectInput } from '@/lib/types/app'
+import { viewLabel, STAGE_ORDER } from '@/lib/types/app'
 import type { TimeWindow } from '@/lib/types/database'
 
 export async function createProject(input: CreateProjectInput) {
   const auth = await requireAdmin()
   if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
-  const { supabase } = auth.data
+  const { user, supabase } = auth.data
 
-  const { data, error } = await supabase.rpc('create_project_workflow_rpc', {
-    p_name: input.name,
-    p_client_id: input.clientId ?? null,
-    p_delivery_date: input.deliveryDate ?? null,
-    p_delivery_time_window: input.deliveryTimeWindow ?? null,
-    p_view_count: input.viewCount,
-    p_notes: input.notes ?? null,
+  const { data: project, error: projectError } = await supabase
+    .from('projects')
+    .insert({
+      name: input.name,
+      client_id: input.clientId ?? null,
+      notes: input.notes ?? null,
+      delivery_date: input.deliveryDate ?? null,
+      delivery_time_window: input.deliveryTimeWindow ?? null,
+      view_count: input.viewCount,
+      status: 'active',
+    })
+    .select()
+    .single()
+
+  if (projectError || !project) return { error: projectError?.message ?? 'Failed to create project' }
+
+  const viewInserts = Array.from({ length: input.viewCount }, (_, i) => ({
+    project_id: project.id,
+    number: i + 1,
+    label: viewLabel(i + 1),
+  }))
+
+  const { data: views, error: viewError } = await supabase
+    .from('project_views')
+    .insert(viewInserts)
+    .select()
+
+  if (viewError || !views) return { error: viewError?.message ?? 'Failed to create views' }
+
+  const { data: round, error: roundError } = await supabase
+    .from('delivery_rounds')
+    .insert({ project_id: project.id, round_number: 0, status: 'active' })
+    .select()
+    .single()
+
+  if (roundError || !round) return { error: roundError?.message ?? 'Failed to create round' }
+
+  const stateInserts = views.flatMap(view =>
+    STAGE_ORDER.map(stage => ({
+      project_id: project.id,
+      delivery_round_id: round.id,
+      project_view_id: view.id,
+      stage,
+      status: 'not_started' as const,
+    }))
+  )
+
+  const { error: statesError } = await supabase.from('view_stage_states').insert(stateInserts)
+  if (statesError) return { error: statesError.message }
+
+  await supabase.from('project_events').insert({
+    project_id: project.id,
+    actor_id: user.id,
+    event_type: 'project_created',
+    payload: { name: input.name, view_count: input.viewCount },
   })
 
-  if (error) return { error: error.message }
-  if (!data.ok) return { error: data.error as string }
-
   revalidatePath('/admin/projects')
-  return { data: { id: data.project_id as string } }
+  return { data: { id: project.id } }
 }
 
 export async function updateProjectDates(
