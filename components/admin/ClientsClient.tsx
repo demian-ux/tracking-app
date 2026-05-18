@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition, useMemo } from 'react'
-import { createClient, updateClient, archiveClient } from '@/lib/actions/clients'
+import { createClient, updateClient, archiveClient, type ClientInput } from '@/lib/actions/clients'
 import type { ClientStatus } from '@/lib/types/database'
 import { CLIENT_STATUS_LABELS } from '@/lib/types/app'
 
@@ -27,7 +27,7 @@ function ClientForm({
   isPending,
 }: {
   initial?: Partial<ClientRow>
-  onSave: (data: Record<string, string>) => void
+  onSave: (data: ClientInput) => void
   onCancel: () => void
   isPending: boolean
 }) {
@@ -118,20 +118,20 @@ export function ClientsClient({ clients: initial }: { clients: ClientRow[] }) {
     )
   }, [clients, search])
 
-  function handleCreate(data: Record<string, string>) {
+  function handleCreate(data: ClientInput) {
     setError(null)
     startTransition(async () => {
-      const result = await createClient(data as any)
+      const result = await createClient(data)
       if (result.error) { setError(result.error); return }
       setClients(prev => [...prev, { ...result.data, projectCount: 0 }])
       setShowCreate(false)
     })
   }
 
-  function handleUpdate(id: string, data: Record<string, string>) {
+  function handleUpdate(id: string, data: ClientInput) {
     setError(null)
     startTransition(async () => {
-      const result = await updateClient(id, data as any)
+      const result = await updateClient(id, data)
       if (result.error) { setError(result.error); return }
       setClients(prev => prev.map(c => c.id === id ? { ...c, ...result.data } : c))
       setEditId(null)

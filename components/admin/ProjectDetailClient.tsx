@@ -3,12 +3,11 @@
 import { useState, useTransition } from 'react'
 import { markDeliverySent, createRevisionRound } from '@/lib/actions/delivery'
 import { updateProjectDates, archiveProject, updateProjectStatus } from '@/lib/actions/projects'
-import { unblockStage, reopenStage } from '@/lib/actions/stages'
+import { unblockStage } from '@/lib/actions/stages'
 import type { Project, DeliveryRound } from '@/lib/types/app'
 import type { TimeWindow, StageType } from '@/lib/types/database'
-import { TIME_WINDOWS, roundLabel, STAGE_LABELS, STAGE_ORDER, ACTIVE_PROJECT_STATUSES, PROJECT_STATUS_LABELS } from '@/lib/types/app'
+import { TIME_WINDOWS, roundLabel, STAGE_LABELS, ACTIVE_PROJECT_STATUSES, PROJECT_STATUS_LABELS } from '@/lib/types/app'
 import { formatDelivery } from '@/lib/utils/formatting'
-import { StageBadge } from '@/components/ui/Badge'
 
 interface ViewStageStateWithUser {
   id: string
@@ -116,16 +115,6 @@ export function ProjectDetailClient({ project, rounds, activeRound, stageStates,
       )
       if (result.error) setFeedback(result.error)
       else setFeedback('Stage unblocked.')
-    })
-  }
-
-  function handleReopen(state: ViewStageStateWithUser) {
-    startTransition(async () => {
-      const result = await reopenStage(
-        project.id, state.delivery_round_id, state.project_view_id, state.stage,
-      )
-      if (result.error) setFeedback(result.error)
-      else setFeedback('Stage reopened.')
     })
   }
 

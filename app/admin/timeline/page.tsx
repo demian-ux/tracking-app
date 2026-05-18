@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { createClient } from '@/lib/supabase/server'
 import { TimelineFilters } from '@/components/admin/TimelineFilters'
 
@@ -41,7 +40,7 @@ export default async function TimelinePage() {
       )}
 
       <TimelineFilters
-        projects={projects ?? []}
+        projects={(projects ?? []) as unknown as Parameters<typeof TimelineFilters>[0]['projects']}
         clients={clients ?? []}
       />
     </div>

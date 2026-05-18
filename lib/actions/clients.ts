@@ -1,4 +1,3 @@
-// @ts-nocheck
 'use server'
 
 import { createClient as createSupabaseClient } from '@/lib/supabase/server'
@@ -28,7 +27,7 @@ export async function createClient(input: ClientInput) {
   const { supabase, error } = await requireAdmin()
   if (error || !supabase) return { error }
 
-  const { data, error: dbError } = await supabase
+  let { data, error: dbError } = await supabase
     .from('clients')
     .insert({
       name: input.name,
@@ -42,6 +41,21 @@ export async function createClient(input: ClientInput) {
     .select()
     .single()
 
+  if (dbError?.message?.includes("Could not find the") && dbError.message.includes("column of 'clients'")) {
+    const fallback = await supabase
+      .from('clients')
+      .insert({
+        name: input.name,
+        contact_name: input.contact_name ?? null,
+        contact_email: input.contact_email ?? null,
+      })
+      .select()
+      .single()
+
+    data = fallback.data
+    dbError = fallback.error
+  }
+
   if (dbError) return { error: dbError.message }
 
   revalidatePath('/admin/clients')
@@ -53,7 +67,7 @@ export async function updateClient(id: string, input: ClientInput) {
   const { supabase, error } = await requireAdmin()
   if (error || !supabase) return { error }
 
-  const { data, error: dbError } = await supabase
+  let { data, error: dbError } = await supabase
     .from('clients')
     .update({
       name: input.name,
@@ -67,6 +81,22 @@ export async function updateClient(id: string, input: ClientInput) {
     .eq('id', id)
     .select()
     .single()
+
+  if (dbError?.message?.includes("Could not find the") && dbError.message.includes("column of 'clients'")) {
+    const fallback = await supabase
+      .from('clients')
+      .update({
+        name: input.name,
+        contact_name: input.contact_name ?? null,
+        contact_email: input.contact_email ?? null,
+      })
+      .eq('id', id)
+      .select()
+      .single()
+
+    data = fallback.data
+    dbError = fallback.error
+  }
 
   if (dbError) return { error: dbError.message }
 

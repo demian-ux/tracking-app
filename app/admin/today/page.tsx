@@ -1,10 +1,31 @@
-// @ts-nocheck
 import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
 import { ProjectBadge, StageBadge } from '@/components/ui/Badge'
 import { formatDelivery, roundLabel } from '@/lib/utils/formatting'
 import { STAGE_LABELS } from '@/lib/types/app'
-import type { StageType } from '@/lib/types/database'
+import type { ProjectStatus, StageStatus, StageType, TimeWindow } from '@/lib/types/database'
+
+interface ProjectSummary {
+  id: string
+  name: string
+  status: ProjectStatus
+  delivery_date: string | null
+  delivery_time_window: TimeWindow | null
+  current_round_number?: number
+  clients: { name: string } | null
+}
+
+interface StageSummary {
+  id: string
+  stage: StageType
+  status: StageStatus
+  latest_eta_date?: string | null
+  latest_eta_time_window?: TimeWindow | null
+  block_reason?: string | null
+  project_views: { id: string; label: string } | null
+  projects: { id: string; name: string; clients: { name: string } | null } | null
+  users: { name: string } | null
+}
 
 function SectionHeader({ children, count }: { children: React.ReactNode; count: number }) {
   return (
@@ -16,7 +37,7 @@ function SectionHeader({ children, count }: { children: React.ReactNode; count: 
   )
 }
 
-function ProjectRow({ project, href, meta }: { project: any; href: string; meta?: React.ReactNode }) {
+function ProjectRow({ project, href, meta }: { project: ProjectSummary; href: string; meta?: React.ReactNode }) {
   return (
     <Link
       href={href}
@@ -38,8 +59,11 @@ function ProjectRow({ project, href, meta }: { project: any; href: string; meta?
 
 export default async function TodayPage() {
   const supabase = await createClient()
-  const today = new Date().toISOString().split('T')[0]
-  const in7Days = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+  const now = new Date()
+  const today = now.toISOString().split('T')[0]
+  const sevenDaysFromNow = new Date(now)
+  sevenDaysFromNow.setDate(now.getDate() + 7)
+  const in7Days = sevenDaysFromNow.toISOString().split('T')[0]
 
   const [
     { data: dueSoonProjects },
@@ -49,7 +73,6 @@ export default async function TodayPage() {
     { data: feedbackProjects },
     { data: revisionProjects },
   ] = await Promise.all([
-    // Due within 7 days, not done
     supabase
       .from('projects')
       .select('id, name, status, delivery_date, delivery_time_window, clients ( name )')
@@ -58,7 +81,6 @@ export default async function TodayPage() {
       .not('status', 'in', '("delivered","archived")')
       .order('delivery_date'),
 
-    // Stages with ETA today, in_progress
     supabase
       .from('view_stage_states')
       .select(`
@@ -71,7 +93,6 @@ export default async function TodayPage() {
       .eq('status', 'in_progress')
       .order('latest_eta_date'),
 
-    // Ready to deliver (round in ready_for_admin_review OR project status = ready_to_deliver)
     supabase
       .from('projects')
       .select(`
@@ -82,7 +103,6 @@ export default async function TodayPage() {
       .eq('status', 'ready_to_deliver')
       .order('name'),
 
-    // Blocked stages
     supabase
       .from('view_stage_states')
       .select(`
@@ -94,14 +114,12 @@ export default async function TodayPage() {
       .eq('status', 'blocked')
       .order('updated_at', { ascending: false }),
 
-    // Waiting for client feedback
     supabase
       .from('projects')
       .select('id, name, status, delivery_date, delivery_time_window, clients ( name )')
       .eq('status', 'waiting_for_feedback')
       .order('name'),
 
-    // Active revisions
     supabase
       .from('projects')
       .select('id, name, status, current_round_number, delivery_date, delivery_time_window, clients ( name )')
@@ -109,11 +127,15 @@ export default async function TodayPage() {
       .order('name'),
   ])
 
-  const totalActionable =
-    (readyProjects?.length ?? 0) +
-    (blockedStates?.length ?? 0)
+  const dueSoonRows = (dueSoonProjects ?? []) as unknown as ProjectSummary[]
+  const stageRows = (stagesToday ?? []) as unknown as StageSummary[]
+  const readyRows = (readyProjects ?? []) as unknown as ProjectSummary[]
+  const blockedRows = (blockedStates ?? []) as unknown as StageSummary[]
+  const feedbackRows = (feedbackProjects ?? []) as unknown as ProjectSummary[]
+  const revisionRows = (revisionProjects ?? []) as unknown as ProjectSummary[]
+  const totalActionable = readyRows.length + blockedRows.length
 
-  const dateStr = new Date().toLocaleDateString('en-US', {
+  const dateStr = now.toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric',
   })
 
@@ -124,43 +146,38 @@ export default async function TodayPage() {
         <span className="text-[11px] text-ink-3">{dateStr}</span>
       </div>
 
-      {/* Ready to deliver — highest priority */}
-      {(readyProjects?.length ?? 0) > 0 && (
+      {readyRows.length > 0 && (
         <section>
-          <SectionHeader count={readyProjects!.length}>Ready to deliver</SectionHeader>
+          <SectionHeader count={readyRows.length}>Ready to deliver</SectionHeader>
           <div className="space-y-1.5">
-            {readyProjects!.map((p: any) => {
-              const activeRound = p.delivery_rounds?.find((r: any) => r.status === 'ready_for_admin_review')
-              return (
-                <div key={p.id} className="flex items-center justify-between px-3 py-2.5 bg-surface border border-accent/30 rounded-md">
-                  <div className="min-w-0">
-                    <div className="text-[13px] text-ink truncate">
-                      {p.clients?.name && <span className="text-ink-3">{p.clients.name} / </span>}
-                      {p.name}
-                    </div>
-                    <div className="text-[11px] text-ink-3 mt-0.5">
-                      {roundLabel(p.current_round_number)} · {formatDelivery(p.delivery_date, p.delivery_time_window)}
-                    </div>
+            {readyRows.map(p => (
+              <div key={p.id} className="flex items-center justify-between px-3 py-2.5 bg-surface border border-accent/30 rounded-md">
+                <div className="min-w-0">
+                  <div className="text-[13px] text-ink truncate">
+                    {p.clients?.name && <span className="text-ink-3">{p.clients.name} / </span>}
+                    {p.name}
                   </div>
-                  <Link
-                    href={`/admin/projects/${p.id}`}
-                    className="ml-4 shrink-0 px-3 py-1 bg-accent text-canvas text-[11px] font-medium rounded hover:bg-accent-dim transition-colors"
-                  >
-                    Review →
-                  </Link>
+                  <div className="text-[11px] text-ink-3 mt-0.5">
+                    {roundLabel(p.current_round_number ?? 0)} - {formatDelivery(p.delivery_date, p.delivery_time_window)}
+                  </div>
                 </div>
-              )
-            })}
+                <Link
+                  href={`/admin/projects/${p.id}`}
+                  className="ml-4 shrink-0 px-3 py-1 bg-accent text-canvas text-[11px] font-medium rounded hover:bg-accent-dim transition-colors"
+                >
+                  Review -&gt;
+                </Link>
+              </div>
+            ))}
           </div>
         </section>
       )}
 
-      {/* Blocked stages */}
-      {(blockedStates?.length ?? 0) > 0 && (
+      {blockedRows.length > 0 && (
         <section>
-          <SectionHeader count={blockedStates!.length}>Blocked</SectionHeader>
+          <SectionHeader count={blockedRows.length}>Blocked</SectionHeader>
           <div className="space-y-1.5">
-            {blockedStates!.map((s: any) => (
+            {blockedRows.map(s => (
               <div key={s.id} className="flex items-center justify-between px-3 py-2.5 bg-blocked-bg border border-blocked-text/20 rounded-md">
                 <div className="min-w-0">
                   <div className="text-[13px] text-ink truncate">
@@ -168,10 +185,10 @@ export default async function TodayPage() {
                       <span className="text-ink-3">{s.projects.clients.name} / </span>
                     )}
                     {s.projects?.name}
-                    <span className="text-ink-3 mx-1.5">·</span>
+                    <span className="text-ink-3 mx-1.5">-</span>
                     <span className="text-ink-2">{s.project_views?.label}</span>
-                    <span className="text-ink-3 mx-1.5">·</span>
-                    <span className="text-ink-2">{STAGE_LABELS[s.stage as StageType]}</span>
+                    <span className="text-ink-3 mx-1.5">-</span>
+                    <span className="text-ink-2">{STAGE_LABELS[s.stage]}</span>
                   </div>
                   {s.block_reason && (
                     <div className="text-[11px] text-blocked-text mt-0.5">{s.block_reason}</div>
@@ -181,7 +198,7 @@ export default async function TodayPage() {
                   href={`/admin/projects/${s.projects?.id}`}
                   className="ml-4 shrink-0 text-[11px] text-ink-3 hover:text-ink-2 transition-colors"
                 >
-                  Unblock →
+                  Unblock -&gt;
                 </Link>
               </div>
             ))}
@@ -189,10 +206,9 @@ export default async function TodayPage() {
         </section>
       )}
 
-      {/* Stages due today */}
-      {(stagesToday?.length ?? 0) > 0 && (
+      {stageRows.length > 0 && (
         <section>
-          <SectionHeader count={stagesToday!.length}>Stages due today</SectionHeader>
+          <SectionHeader count={stageRows.length}>Stages due today</SectionHeader>
           <div className="bg-surface border border-line rounded-md overflow-hidden">
             <table className="w-full">
               <thead>
@@ -205,7 +221,7 @@ export default async function TodayPage() {
                 </tr>
               </thead>
               <tbody>
-                {stagesToday!.map((s: any, i: number) => (
+                {stageRows.map((s, i) => (
                   <tr key={s.id} className={i > 0 ? 'border-t border-line' : ''}>
                     <td className="px-3 py-2.5">
                       <Link href={`/admin/projects/${s.projects?.id}`} className="text-[12px] text-ink hover:text-accent transition-colors">
@@ -215,12 +231,12 @@ export default async function TodayPage() {
                     <td className="px-3 py-2.5 text-[12px] text-ink-2">{s.project_views?.label}</td>
                     <td className="px-3 py-2.5">
                       <StageBadge status={s.status} />
-                      <span className="ml-1.5 text-[11px] text-ink-3">{STAGE_LABELS[s.stage as StageType]}</span>
+                      <span className="ml-1.5 text-[11px] text-ink-3">{STAGE_LABELS[s.stage]}</span>
                     </td>
                     <td className="px-3 py-2.5 text-[11px] text-ink-2 tabular-nums">
-                      {formatDelivery(s.latest_eta_date, s.latest_eta_time_window)}
+                      {formatDelivery(s.latest_eta_date ?? null, s.latest_eta_time_window ?? null)}
                     </td>
-                    <td className="px-3 py-2.5 text-[11px] text-ink-3">{s.users?.name ?? '—'}</td>
+                    <td className="px-3 py-2.5 text-[11px] text-ink-3">{s.users?.name ?? '-'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -229,75 +245,59 @@ export default async function TodayPage() {
         </section>
       )}
 
-      {/* Due this week */}
-      {(dueSoonProjects?.length ?? 0) > 0 && (
+      {dueSoonRows.length > 0 && (
         <section>
-          <SectionHeader count={dueSoonProjects!.length}>Due this week</SectionHeader>
+          <SectionHeader count={dueSoonRows.length}>Due this week</SectionHeader>
           <div className="space-y-1.5">
-            {dueSoonProjects!.map((p: any) => (
+            {dueSoonRows.map(p => (
               <ProjectRow
                 key={p.id}
                 project={p}
                 href={`/admin/projects/${p.id}`}
-                meta={
-                  <span className="text-[11px] text-ink-3">
-                    {formatDelivery(p.delivery_date, p.delivery_time_window)}
-                  </span>
-                }
+                meta={<span className="text-[11px] text-ink-3">{formatDelivery(p.delivery_date, p.delivery_time_window)}</span>}
               />
             ))}
           </div>
         </section>
       )}
 
-      {/* Waiting for feedback */}
-      {(feedbackProjects?.length ?? 0) > 0 && (
+      {feedbackRows.length > 0 && (
         <section>
-          <SectionHeader count={feedbackProjects!.length}>Waiting for feedback</SectionHeader>
+          <SectionHeader count={feedbackRows.length}>Waiting for feedback</SectionHeader>
           <div className="space-y-1.5">
-            {feedbackProjects!.map((p: any) => (
+            {feedbackRows.map(p => (
               <ProjectRow
                 key={p.id}
                 project={p}
                 href={`/admin/projects/${p.id}`}
-                meta={
-                  <span className="text-[11px] text-ink-3">
-                    {formatDelivery(p.delivery_date, p.delivery_time_window)}
-                  </span>
-                }
+                meta={<span className="text-[11px] text-ink-3">{formatDelivery(p.delivery_date, p.delivery_time_window)}</span>}
               />
             ))}
           </div>
         </section>
       )}
 
-      {/* Active revisions */}
-      {(revisionProjects?.length ?? 0) > 0 && (
+      {revisionRows.length > 0 && (
         <section>
-          <SectionHeader count={revisionProjects!.length}>Active revisions</SectionHeader>
+          <SectionHeader count={revisionRows.length}>Active revisions</SectionHeader>
           <div className="space-y-1.5">
-            {revisionProjects!.map((p: any) => (
+            {revisionRows.map(p => (
               <ProjectRow
                 key={p.id}
                 project={p}
                 href={`/admin/projects/${p.id}`}
-                meta={
-                  <span className="text-[11px] text-ink-3">
-                    {roundLabel(p.current_round_number)}
-                  </span>
-                }
+                meta={<span className="text-[11px] text-ink-3">{roundLabel(p.current_round_number ?? 0)}</span>}
               />
             ))}
           </div>
         </section>
       )}
 
-      {/* All quiet */}
       {totalActionable === 0 &&
-        (stagesToday?.length ?? 0) === 0 &&
-        (dueSoonProjects?.length ?? 0) === 0 &&
-        (feedbackProjects?.length ?? 0) === 0 &&
-        (revisionProjects?.length ?? 0) === 0 && (
+        stageRows.length === 0 &&
+        dueSoonRows.length === 0 &&
+        feedbackRows.length === 0 &&
+        revisionRows.length === 0 && (
           <div className="text-center py-20 text-ink-3 text-[13px]">All clear.</div>
         )}
     </div>

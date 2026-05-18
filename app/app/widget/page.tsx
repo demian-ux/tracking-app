@@ -1,6 +1,6 @@
-// @ts-nocheck
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
+import Link from 'next/link'
 import { WidgetClient } from '@/components/widget/WidgetClient'
 import { ensureUserProfile } from '@/lib/utils/ensure-profile'
 
@@ -29,25 +29,23 @@ export default async function WidgetPage() {
 
   return (
     <div className="min-h-screen bg-canvas flex flex-col">
-      {/* Top bar */}
       <header className="border-b border-line shrink-0">
         <div className="max-w-[460px] mx-auto px-6 h-11 flex items-center justify-between">
           <span className="text-[11px] tracking-[0.15em] uppercase text-ink-3">Oaki Studio</span>
           <div className="flex items-center gap-4">
             <span className="text-[12px] text-ink-2">{currentUser?.name ?? user.email}</span>
             {currentUser?.role === 'admin' && (
-              <a
+              <Link
                 href="/admin/projects"
                 className="text-[11px] text-ink-3 hover:text-ink-2 transition-colors tracking-wide"
               >
-                Admin →
-              </a>
+                Admin -&gt;
+              </Link>
             )}
           </div>
         </div>
       </header>
 
-      {/* Content */}
       <main className="flex-1 max-w-[460px] w-full mx-auto px-6 py-8">
         {projectsError && (
           <div className="mb-6 p-3 bg-blocked-bg border border-blocked-text/20 rounded-md">
@@ -66,7 +64,7 @@ export default async function WidgetPage() {
         )}
 
         <WidgetClient
-          projects={projects ?? []}
+          projects={(projects ?? []) as unknown as Parameters<typeof WidgetClient>[0]['projects']}
           userId={user.id}
           hasError={!!projectsError}
         />

@@ -1,6 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
 
-// @ts-nocheck
 const EVENT_LABELS: Record<string, string> = {
   project_created: 'Project created',
   delivery_date_changed: 'Delivery date changed',
@@ -11,6 +10,8 @@ const EVENT_LABELS: Record<string, string> = {
   project_archived: 'Project archived',
   information_received: 'Information received',
   information_completed: 'Information completed',
+  project_status_changed: 'Project status changed',
+  admin_review_approved: 'Admin review approved',
   stage_started: 'Stage started',
   stage_eta_changed: 'Stage ETA changed',
   stage_finished: 'Stage finished',
@@ -19,27 +20,47 @@ const EVENT_LABELS: Record<string, string> = {
   stage_unblocked: 'Stage unblocked',
 }
 
+interface BaseEvent {
+  id: string
+  event_type: string
+  created_at: string
+  projects: { name: string } | null
+  users: { name: string } | null
+}
+
+interface ProjectEventRow extends BaseEvent {
+  kind: 'project'
+  payload: unknown
+}
+
+interface StageEventRow extends BaseEvent {
+  kind: 'stage'
+  stage: string
+  project_views: { label: string } | null
+}
+
+type EventRow = ProjectEventRow | StageEventRow
+
 export default async function EventsPage() {
   const supabase = await createClient()
 
   const [{ data: projectEvents }, { data: stageEvents }] = await Promise.all([
     supabase
       .from('project_events')
-      .select(`id, event_type, created_at, payload, projects ( name ), users ( name )`)
+      .select('id, event_type, created_at, payload, projects ( name ), users ( name )')
       .order('created_at', { ascending: false })
       .limit(100),
 
     supabase
       .from('stage_events')
-      .select(`id, event_type, stage, created_at, projects ( name ), project_views ( label ), users ( name )`)
+      .select('id, event_type, stage, created_at, projects ( name ), project_views ( label ), users ( name )')
       .order('created_at', { ascending: false })
       .limit(100),
   ])
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const all: any[] = [
-    ...(projectEvents ?? []).map((e: any) => ({ ...e, kind: 'project' as const })),
-    ...(stageEvents ?? []).map((e: any) => ({ ...e, kind: 'stage' as const })),
+  const all: EventRow[] = [
+    ...((projectEvents ?? []) as unknown as Omit<ProjectEventRow, 'kind'>[]).map(e => ({ ...e, kind: 'project' as const })),
+    ...((stageEvents ?? []) as unknown as Omit<StageEventRow, 'kind'>[]).map(e => ({ ...e, kind: 'stage' as const })),
   ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     .slice(0, 150)
 
@@ -66,11 +87,11 @@ export default async function EventsPage() {
             {all.map((event, i) => {
               const label = EVENT_LABELS[event.event_type] ?? event.event_type
               const detail = event.kind === 'stage'
-                ? `${(event as { project_views: { label: string } | null }).project_views?.label ?? ''} · ${(event as { stage: string }).stage.replace('_', ' ')}`
+                ? `${event.project_views?.label ?? ''} - ${event.stage.replace('_', ' ')}`
                 : ''
 
               return (
-                <tr key={event.id} className={i > 0 ? 'border-t border-line' : ''}>
+                <tr key={`${event.kind}-${event.id}`} className={i > 0 ? 'border-t border-line' : ''}>
                   <td className="px-4 py-2.5 text-[11px] text-ink-3 tabular-nums whitespace-nowrap">
                     {new Date(event.created_at).toLocaleString('en-US', {
                       month: 'short', day: 'numeric',
@@ -78,7 +99,7 @@ export default async function EventsPage() {
                     })}
                   </td>
                   <td className="px-4 py-2.5 text-[12px] text-ink-2">
-                    {(event as { projects: { name: string } | null }).projects?.name ?? '—'}
+                    {event.projects?.name ?? '-'}
                   </td>
                   <td className="px-4 py-2.5">
                     <span className={`text-[10px] px-1.5 py-0.5 rounded ${
@@ -91,7 +112,7 @@ export default async function EventsPage() {
                   </td>
                   <td className="px-4 py-2.5 text-[11px] text-ink-3">{detail}</td>
                   <td className="px-4 py-2.5 text-[11px] text-ink-3">
-                    {(event as { users: { name: string } | null }).users?.name ?? '—'}
+                    {event.users?.name ?? '-'}
                   </td>
                 </tr>
               )

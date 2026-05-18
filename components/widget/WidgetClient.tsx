@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useTransition } from 'react'
+import { useState, useEffect, useMemo, useTransition } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { startStage, finishStage, blockStage } from '@/lib/actions/stages'
 import type { StageType, TimeWindow } from '@/lib/types/database'
@@ -57,7 +57,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 }
 
 export function WidgetClient({ projects, userId, hasError }: WidgetClientProps) {
-  const supabase = createClient()
+  const supabase = useMemo(() => createClient(), [])
   const [isPending, startTransition] = useTransition()
 
   const [projectId, setProjectId] = useState('')
@@ -79,25 +79,29 @@ export function WidgetClient({ projects, userId, hasError }: WidgetClientProps) 
   const project = projects.find(p => p.id === projectId) ?? null
 
   useEffect(() => {
-    if (!projectId) {
-      setViews([]); setRound(null); setStates([])
-      setStage(''); setSelectedViewIds([])
-      return
-    }
+    if (!projectId) return
+    let ignore = false
     ;(async () => {
       const [{ data: v }, { data: r }] = await Promise.all([
         supabase.from('project_views').select('*').eq('project_id', projectId).eq('active', true).order('number'),
         supabase.from('delivery_rounds').select('*').eq('project_id', projectId).in('status', ['active', 'ready_for_admin_review']).order('round_number', { ascending: false }).limit(1),
       ])
+      if (ignore) return
       setViews(v ?? [])
       const activeRound = r?.[0] ?? null
       setRound(activeRound)
       if (activeRound) {
         const { data: s } = await supabase.from('view_stage_states').select('*').eq('delivery_round_id', activeRound.id)
+        if (ignore) return
         setStates(s ?? [])
+      } else {
+        setStates([])
       }
     })()
-  }, [projectId])
+    return () => {
+      ignore = true
+    }
+  }, [projectId, supabase])
 
   async function reloadStates() {
     if (!round) return
@@ -151,7 +155,7 @@ export function WidgetClient({ projects, userId, hasError }: WidgetClientProps) 
         etaTimeWindow: (etaWindow || null) as TimeWindow | null,
       })
       if (result.error === 'conflict') {
-        setConflictViewIds((result as any).conflictingViewIds ?? [])
+        setConflictViewIds('conflictingViewIds' in result ? result.conflictingViewIds ?? [] : [])
         setFeedback({ ok: false, msg: 'Conflict — those views are already in progress.' })
       } else if (result.error) {
         setFeedback({ ok: false, msg: result.error })
@@ -212,7 +216,20 @@ export function WidgetClient({ projects, userId, hasError }: WidgetClientProps) 
         <SectionLabel>Project</SectionLabel>
         <select
           value={projectId}
-          onChange={e => { setProjectId(e.target.value); setSelectedViewIds([]); setFeedback(null) }}
+          onChange={e => {
+            const nextProjectId = e.target.value
+            setProjectId(nextProjectId)
+            setSelectedViewIds([])
+            setFeedback(null)
+            setConflictViewIds([])
+            setShowBlockPanel(false)
+            if (!nextProjectId) {
+              setViews([])
+              setRound(null)
+              setStates([])
+              setStage('')
+            }
+          }}
           className="w-full px-3 py-2 bg-surface border border-line rounded-md text-[13px] text-ink focus:outline-none focus:border-accent transition-colors hover:border-line-strong"
         >
           <option value="">Select project…</option>

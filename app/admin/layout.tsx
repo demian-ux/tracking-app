@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
@@ -51,9 +50,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             </nav>
           </div>
           <div className="flex items-center gap-4">
-            <a href="/app/widget" className="text-[11px] text-ink-3 hover:text-ink-2 transition-colors tracking-wide">
-              Widget →
-            </a>
+            <Link href="/app/widget" className="text-[11px] text-ink-3 hover:text-ink-2 transition-colors tracking-wide">
+              Widget -&gt;
+            </Link>
             <span className="text-[12px] text-ink-2">{profile.name}</span>
           </div>
         </div>

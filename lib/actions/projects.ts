@@ -1,4 +1,3 @@
-// @ts-nocheck
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
@@ -16,8 +15,9 @@ export async function createProject(input: CreateProjectInput) {
   const { data: actor } = await supabase.from('users').select('role').eq('id', user.id).single()
   if (actor?.role !== 'admin') return { error: 'Forbidden' }
 
-  // Create project
-  const { data: project, error: projectError } = await supabase
+  // Create project. Prefer the current status vocabulary, but tolerate older
+  // databases that have not yet received the production-status migration.
+  let { data: project, error: projectError } = await supabase
     .from('projects')
     .insert({
       name: input.name,
@@ -29,6 +29,24 @@ export async function createProject(input: CreateProjectInput) {
     })
     .select()
     .single()
+
+  if (projectError?.message?.includes('invalid input value for enum project_status')) {
+    const fallback = await supabase
+      .from('projects')
+      .insert({
+        name: input.name,
+        client_id: input.clientId,
+        delivery_date: input.deliveryDate,
+        delivery_time_window: input.deliveryTimeWindow,
+        view_count: input.viewCount,
+        status: 'not_started',
+      })
+      .select()
+      .single()
+
+    project = fallback.data
+    projectError = fallback.error
+  }
 
   if (projectError || !project) return { error: projectError?.message ?? 'Failed to create project' }
 

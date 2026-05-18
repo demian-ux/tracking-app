@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { createProject } from '@/lib/actions/projects'
 import { createClient } from '@/lib/actions/clients'
 import type { TimeWindow } from '@/lib/types/database'
@@ -226,12 +227,12 @@ export function NewProjectForm({ clients: initialClients }: { clients: Client[] 
         >
           {isPending ? 'Creating…' : 'Create project'}
         </button>
-        <a
+        <Link
           href="/admin/projects"
           className="text-[13px] text-ink-3 hover:text-ink-2 transition-colors"
         >
           Cancel
-        </a>
+        </Link>
       </div>
     </form>
   )

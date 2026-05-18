@@ -18,8 +18,3 @@ ALTER TYPE project_event_type ADD VALUE IF NOT EXISTS 'admin_review_approved';
 -- 4. Block reason on view_stage_states
 ALTER TABLE view_stage_states
   ADD COLUMN IF NOT EXISTS block_reason TEXT;
-
--- 5. Migrate existing rows to new status vocabulary
-UPDATE projects SET status = 'in_production'        WHERE status = 'in_progress';
-UPDATE projects SET status = 'waiting_for_info'     WHERE status = 'not_started';
-UPDATE projects SET status = 'waiting_for_feedback' WHERE status = 'waiting_for_client';

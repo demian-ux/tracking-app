@@ -7,14 +7,14 @@ import { ProgressBar } from '@/components/ui/ProgressBar'
 import { calculateProgress } from '@/lib/utils/progress'
 import { formatDelivery, roundLabel } from '@/lib/utils/formatting'
 import { STAGE_LABELS, STAGE_ORDER } from '@/lib/types/app'
-import type { StageType } from '@/lib/types/database'
+import type { StageStatus, StageType, TimeWindow } from '@/lib/types/database'
 
 interface TimelineProject {
   id: string
   name: string
   status: string
   delivery_date: string | null
-  delivery_time_window: string | null
+  delivery_time_window: TimeWindow | null
   current_round_number: number
   clients: { name: string } | null
   project_views: { id: string; number: number; label: string; active: boolean }[]
@@ -25,10 +25,10 @@ interface TimelineProject {
     view_stage_states: {
       id: string
       project_view_id: string
-      stage: string
-      status: string
+      stage: StageType
+      status: StageStatus
       latest_eta_date: string | null
-      latest_eta_time_window: string | null
+      latest_eta_time_window: TimeWindow | null
     }[]
   }[]
 }
@@ -167,7 +167,7 @@ export function TimelineFilters({ projects, clients }: Props) {
           const activeRound = project.delivery_rounds.find(r => r.status === 'active' || r.status === 'ready_for_admin_review')
           const activeViews = project.project_views.filter(v => v.active)
           const activeStates = activeRound?.view_stage_states ?? []
-          const progress = calculateProgress(activeStates as any)
+          const progress = calculateProgress(activeStates)
 
           return (
             <div key={project.id} className="bg-surface border border-line rounded-md overflow-hidden">
@@ -192,7 +192,7 @@ export function TimelineFilters({ projects, clients }: Props) {
                     </span>
                     <span className="text-ink-3 text-[11px]">·</span>
                     <span className="text-[11px] text-ink-3">
-                      {formatDelivery(project.delivery_date, project.delivery_time_window as any)}
+                      {formatDelivery(project.delivery_date, project.delivery_time_window)}
                     </span>
                   </div>
                 </div>
@@ -227,10 +227,10 @@ export function TimelineFilters({ projects, clients }: Props) {
                               <td key={stage} className="px-4 py-2.5">
                                 {state ? (
                                   <div>
-                                    <StageBadge status={state.status as any} />
+                                    <StageBadge status={state.status} />
                                     {state.latest_eta_date && (
                                       <div className="text-[10px] text-ink-3 mt-0.5">
-                                        {formatDelivery(state.latest_eta_date, state.latest_eta_time_window as any)}
+                                        {formatDelivery(state.latest_eta_date, state.latest_eta_time_window)}
                                       </div>
                                     )}
                                   </div>

@@ -1,6 +1,6 @@
-// @ts-nocheck
 import { createClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
+import Link from 'next/link'
 import { ProjectBadge, StageBadge } from '@/components/ui/Badge'
 import { ProgressBar } from '@/components/ui/ProgressBar'
 import { calculateProgress } from '@/lib/utils/progress'
@@ -18,7 +18,7 @@ export default async function ProjectDetailPage({ params }: Props) {
 
   const { data: project } = await supabase
     .from('projects')
-    .select(`*, clients ( id, name, contact_name, contact_email )`)
+    .select('*, clients ( id, name, contact_name, contact_email )')
     .eq('id', id)
     .single()
 
@@ -42,7 +42,7 @@ export default async function ProjectDetailPage({ params }: Props) {
   const { data: stageStates } = activeRound
     ? await supabase
         .from('view_stage_states')
-        .select(`*, users ( name )`)
+        .select('*, users ( name )')
         .eq('delivery_round_id', activeRound.id)
     : { data: [] }
 
@@ -50,7 +50,6 @@ export default async function ProjectDetailPage({ params }: Props) {
 
   return (
     <div className="space-y-8">
-      {/* Header */}
       <div className="flex items-start justify-between">
         <div>
           <div className="flex items-center gap-2 mb-1.5">
@@ -61,20 +60,19 @@ export default async function ProjectDetailPage({ params }: Props) {
           </div>
           <div className="flex items-center gap-2 text-[11px] text-ink-2">
             <ProjectBadge status={project.status} />
-            <span className="text-ink-3">·</span>
+            <span className="text-ink-3">-</span>
             <span>{roundLabel(project.current_round_number)}</span>
-            <span className="text-ink-3">·</span>
+            <span className="text-ink-3">-</span>
             <span>{project.view_count} views</span>
-            <span className="text-ink-3">·</span>
+            <span className="text-ink-3">-</span>
             <span>{project.delivery_count} deliveries</span>
           </div>
         </div>
-        <a href="/admin/projects" className="text-[12px] text-ink-3 hover:text-ink-2 transition-colors">
-          ← Back
-        </a>
+        <Link href="/admin/projects" className="text-[12px] text-ink-3 hover:text-ink-2 transition-colors">
+          &lt;- Back
+        </Link>
       </div>
 
-      {/* Key dates + progress */}
       <div className="grid grid-cols-3 gap-3">
         <div className="bg-surface border border-line rounded-md p-4">
           <div className="text-[10px] tracking-[0.12em] uppercase text-ink-3 mb-2">Delivery</div>
@@ -96,20 +94,18 @@ export default async function ProjectDetailPage({ params }: Props) {
         </div>
       </div>
 
-      {/* Admin actions (client component) */}
       <ProjectDetailClient
-        project={project as never}
+        project={project}
         rounds={rounds ?? []}
         activeRound={activeRound ?? null}
         stageStates={stageStates ?? []}
         views={views ?? []}
       />
 
-      {/* View-stage grid */}
       {activeRound && views && views.length > 0 && (
         <div>
           <h2 className="text-[11px] tracking-[0.12em] uppercase text-ink-3 mb-3">
-            {roundLabel(activeRound.round_number)} — View stages
+            {roundLabel(activeRound.round_number)} - View stages
           </h2>
           <div className="bg-surface border border-line rounded-md overflow-hidden">
             <table className="w-full">
@@ -146,7 +142,7 @@ export default async function ProjectDetailPage({ params }: Props) {
                               )}
                             </div>
                           ) : (
-                            <span className="text-[11px] text-ink-3">—</span>
+                            <span className="text-[11px] text-ink-3">-</span>
                           )}
                         </td>
                       )

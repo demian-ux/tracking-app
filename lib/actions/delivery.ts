@@ -1,9 +1,8 @@
-// @ts-nocheck
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
-import { STAGE_ORDER, viewLabel } from '@/lib/types/app'
+import { STAGE_ORDER } from '@/lib/types/app'
 
 export async function markDeliverySent(projectId: string, roundId: string) {
   const supabase = await createClient()

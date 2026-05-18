@@ -1,4 +1,10 @@
--- Client status enum
+-- ============================================================
+-- 008 - Ensure client management columns
+-- ============================================================
+-- Some environments were created before client profiles gained status, phone,
+-- website, notes, and updated_at. Keep this migration idempotent so those
+-- databases can be brought forward safely.
+
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'client_status') THEN
@@ -7,7 +13,6 @@ BEGIN
 END;
 $$;
 
--- Add missing columns to clients
 ALTER TABLE clients
   ADD COLUMN IF NOT EXISTS phone      TEXT,
   ADD COLUMN IF NOT EXISTS website    TEXT,
@@ -15,10 +20,13 @@ ALTER TABLE clients
   ADD COLUMN IF NOT EXISTS status     client_status NOT NULL DEFAULT 'active',
   ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ   NOT NULL DEFAULT NOW();
 
--- updated_at trigger (reuses the function from migration 001)
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'set_updated_at_clients') THEN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_trigger
+    WHERE tgname = 'set_updated_at_clients'
+  ) THEN
     CREATE TRIGGER set_updated_at_clients
       BEFORE UPDATE ON clients
       FOR EACH ROW EXECUTE FUNCTION update_updated_at();
@@ -26,5 +34,6 @@ BEGIN
 END;
 $$;
 
--- Backfill updated_at for any existing rows
-UPDATE clients SET updated_at = created_at WHERE updated_at IS NULL;
+UPDATE clients
+SET updated_at = created_at
+WHERE updated_at IS NULL;
