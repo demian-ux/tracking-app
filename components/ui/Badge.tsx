@@ -16,35 +16,38 @@ const stageLabels: Record<StageStatus, string> = {
   reopened:    'Reopened',
 }
 
-// Covers both new canonical statuses and legacy DB values
 const projectStyles: Record<string, string> = {
-  waiting_for_info:    'bg-surface text-ink-3 border border-line',
-  ready_to_start:      'bg-elevated text-ink-2 border border-line-strong',
-  in_production:       'bg-progress-bg text-progress-text',
-  ready_to_deliver:    'bg-surface text-accent border border-accent/40',
-  delivered:           'bg-done-bg text-done-text',
-  waiting_for_feedback:'bg-warn-bg text-warn-text',
-  revision_in_progress:'bg-reopened-bg text-reopened-text',
-  archived:            'bg-surface text-ink-3 border border-line',
-  // legacy
-  not_started:         'bg-surface text-ink-3 border border-line',
-  in_progress:         'bg-progress-bg text-progress-text',
-  waiting_for_client:  'bg-warn-bg text-warn-text',
+  active:               'bg-progress-bg text-progress-text',
+  waiting_for_feedback: 'bg-warn-bg text-warn-text',
+  delivered:            'bg-done-bg text-done-text',
+  revision:             'bg-reopened-bg text-reopened-text',
+  archived:             'bg-surface text-ink-3 border border-line',
+  // legacy — map to closest canonical style
+  waiting_for_info:     'bg-progress-bg text-progress-text',
+  ready_to_start:       'bg-progress-bg text-progress-text',
+  in_production:        'bg-progress-bg text-progress-text',
+  ready_to_deliver:     'bg-progress-bg text-progress-text',
+  revision_in_progress: 'bg-reopened-bg text-reopened-text',
+  not_started:          'bg-progress-bg text-progress-text',
+  in_progress:          'bg-progress-bg text-progress-text',
+  waiting_for_client:   'bg-warn-bg text-warn-text',
 }
 
 const projectLabels: Record<string, string> = {
-  waiting_for_info:    'Waiting for info',
-  ready_to_start:      'Ready to start',
-  in_production:       'In production',
-  ready_to_deliver:    'Ready to deliver',
-  delivered:           'Delivered',
-  waiting_for_feedback:'Waiting for feedback',
-  revision_in_progress:'Revision',
-  archived:            'Archived',
+  active:               'Active',
+  waiting_for_feedback: 'Waiting for feedback',
+  delivered:            'Delivered',
+  revision:             'Revision',
+  archived:             'Archived',
   // legacy
-  not_started:         'Not started',
-  in_progress:         'In progress',
-  waiting_for_client:  'Waiting',
+  waiting_for_info:     'Active',
+  ready_to_start:       'Active',
+  in_production:        'Active',
+  ready_to_deliver:     'Active',
+  revision_in_progress: 'Revision',
+  not_started:          'Active',
+  in_progress:          'Active',
+  waiting_for_client:   'Waiting for feedback',
 }
 
 export function StageBadge({ status }: { status: StageStatus }) {

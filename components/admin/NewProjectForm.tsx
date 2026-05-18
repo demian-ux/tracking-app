@@ -26,6 +26,7 @@ export function NewProjectForm({ clients: initialClients }: { clients: Client[] 
   // Project fields
   const [name, setName] = useState('')
   const [clientId, setClientId] = useState('')
+  const [notes, setNotes] = useState('')
   const [deliveryDate, setDeliveryDate] = useState('')
   const [deliveryWindow, setDeliveryWindow] = useState<TimeWindow | ''>('')
   const [viewCount, setViewCount] = useState(3)
@@ -80,6 +81,7 @@ export function NewProjectForm({ clients: initialClients }: { clients: Client[] 
       const result = await createProject({
         name,
         clientId,
+        notes: notes || null,
         deliveryDate: deliveryDate || null,
         deliveryTimeWindow: (deliveryWindow || null) as TimeWindow | null,
         viewCount,
@@ -179,6 +181,17 @@ export function NewProjectForm({ clients: initialClients }: { clients: Client[] 
           </div>
         </div>
       )}
+
+      <div>
+        <label className={labelClass}>Notes <span className="text-ink-3 normal-case tracking-normal">(optional)</span></label>
+        <textarea
+          value={notes}
+          onChange={e => setNotes(e.target.value)}
+          rows={2}
+          placeholder="Internal notes…"
+          className={`${fieldClass} resize-none`}
+        />
+      </div>
 
       <div className="flex gap-3">
         <div className="flex-1">

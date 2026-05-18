@@ -9,15 +9,17 @@ export type Json =
 export type UserRole = 'admin' | 'team_member' | 'client'
 export type ClientStatus = 'active' | 'inactive' | 'archived'
 export type ProjectStatus =
+  | 'active'
+  | 'waiting_for_feedback'
+  | 'delivered'
+  | 'revision'
+  | 'archived'
+  // legacy values kept for backward compat
   | 'waiting_for_info'
   | 'ready_to_start'
   | 'in_production'
   | 'ready_to_deliver'
-  | 'delivered'
-  | 'waiting_for_feedback'
   | 'revision_in_progress'
-  | 'archived'
-  // legacy values kept for backward compat with existing DB rows
   | 'not_started'
   | 'in_progress'
   | 'waiting_for_client'
@@ -109,11 +111,10 @@ export interface Database {
           id: string
           client_id: string | null
           name: string
+          notes: string | null
           status: ProjectStatus
           delivery_date: string | null
           delivery_time_window: TimeWindow | null
-          public_eta_date: string | null
-          public_eta_time_window: TimeWindow | null
           view_count: number
           current_round_number: number
           delivery_count: number
@@ -124,11 +125,10 @@ export interface Database {
           id?: string
           client_id?: string | null
           name: string
+          notes?: string | null
           status?: ProjectStatus
           delivery_date?: string | null
           delivery_time_window?: TimeWindow | null
-          public_eta_date?: string | null
-          public_eta_time_window?: TimeWindow | null
           view_count?: number
           current_round_number?: number
           delivery_count?: number
@@ -138,11 +138,10 @@ export interface Database {
         Update: {
           client_id?: string | null
           name?: string
+          notes?: string | null
           status?: ProjectStatus
           delivery_date?: string | null
           delivery_time_window?: TimeWindow | null
-          public_eta_date?: string | null
-          public_eta_time_window?: TimeWindow | null
           view_count?: number
           current_round_number?: number
           delivery_count?: number

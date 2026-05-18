@@ -97,7 +97,7 @@ export async function createRevisionRound(projectId: string) {
 
   await supabase
     .from('projects')
-    .update({ current_round_number: newRoundNumber, status: 'revision_in_progress' })
+    .update({ current_round_number: newRoundNumber, status: 'revision' })
     .eq('id', projectId)
 
   await supabase.from('project_events').insert({

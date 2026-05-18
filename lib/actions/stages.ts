@@ -55,13 +55,6 @@ export async function startStage(input: StartStageInput) {
   }))
   await supabase.from('stage_events').insert(events)
 
-  // Advance project status to in_production if it was waiting
-  await supabase
-    .from('projects')
-    .update({ status: 'in_production' })
-    .eq('id', input.projectId)
-    .in('status', ['waiting_for_info', 'ready_to_start', 'not_started'])
-
   revalidatePath('/app/widget')
   revalidatePath(`/admin/projects/${input.projectId}`)
   return { data: true }
@@ -91,38 +84,6 @@ export async function finishStage(input: FinishStageInput) {
     actor_id: user.id,
   }))
   await supabase.from('stage_events').insert(events)
-
-  // Check if all post_production stages for this round are now done
-  if (input.stage === 'post_production') {
-    const { data: allPostProd } = await supabase
-      .from('view_stage_states')
-      .select('status')
-      .eq('delivery_round_id', input.roundId)
-      .eq('stage', 'post_production')
-
-    const total = allPostProd?.length ?? 0
-    const done = allPostProd?.filter(s => s.status === 'done').length ?? 0
-
-    if (total > 0 && done === total) {
-      // All post-production done — flag round for admin review
-      await supabase
-        .from('delivery_rounds')
-        .update({ status: 'ready_for_admin_review' })
-        .eq('id', input.roundId)
-
-      await supabase
-        .from('projects')
-        .update({ status: 'ready_to_deliver' })
-        .eq('id', input.projectId)
-
-      await supabase.from('project_events').insert({
-        project_id: input.projectId,
-        actor_id: user.id,
-        event_type: 'admin_review_approved',
-        payload: { round_id: input.roundId, triggered_by: 'all_post_production_done' },
-      })
-    }
-  }
 
   revalidatePath('/app/widget')
   revalidatePath(`/admin/projects/${input.projectId}`)

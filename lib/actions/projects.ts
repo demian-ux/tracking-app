@@ -15,38 +15,19 @@ export async function createProject(input: CreateProjectInput) {
   const { data: actor } = await supabase.from('users').select('role').eq('id', user.id).single()
   if (actor?.role !== 'admin') return { error: 'Forbidden' }
 
-  // Create project. Prefer the current status vocabulary, but tolerate older
-  // databases that have not yet received the production-status migration.
-  let { data: project, error: projectError } = await supabase
+  const { data: project, error: projectError } = await supabase
     .from('projects')
     .insert({
       name: input.name,
       client_id: input.clientId,
+      notes: input.notes ?? null,
       delivery_date: input.deliveryDate,
       delivery_time_window: input.deliveryTimeWindow,
       view_count: input.viewCount,
-      status: 'waiting_for_info',
+      status: 'active',
     })
     .select()
     .single()
-
-  if (projectError?.message?.includes('invalid input value for enum project_status')) {
-    const fallback = await supabase
-      .from('projects')
-      .insert({
-        name: input.name,
-        client_id: input.clientId,
-        delivery_date: input.deliveryDate,
-        delivery_time_window: input.deliveryTimeWindow,
-        view_count: input.viewCount,
-        status: 'not_started',
-      })
-      .select()
-      .single()
-
-    project = fallback.data
-    projectError = fallback.error
-  }
 
   if (projectError || !project) return { error: projectError?.message ?? 'Failed to create project' }
 
@@ -104,8 +85,6 @@ export async function updateProjectDates(
   updates: {
     deliveryDate?: string | null
     deliveryTimeWindow?: TimeWindow | null
-    publicEtaDate?: string | null
-    publicEtaTimeWindow?: TimeWindow | null
   }
 ) {
   const supabase = await createClient()
@@ -120,8 +99,6 @@ export async function updateProjectDates(
     .update({
       delivery_date: updates.deliveryDate,
       delivery_time_window: updates.deliveryTimeWindow,
-      public_eta_date: updates.publicEtaDate,
-      public_eta_time_window: updates.publicEtaTimeWindow,
     })
     .eq('id', projectId)
 
@@ -133,15 +110,6 @@ export async function updateProjectDates(
       actor_id: user.id,
       event_type: 'delivery_date_changed',
       payload: { delivery_date: updates.deliveryDate, delivery_time_window: updates.deliveryTimeWindow },
-    })
-  }
-
-  if (updates.publicEtaDate !== undefined) {
-    await supabase.from('project_events').insert({
-      project_id: projectId,
-      actor_id: user.id,
-      event_type: 'public_eta_changed',
-      payload: { public_eta_date: updates.publicEtaDate, public_eta_time_window: updates.publicEtaTimeWindow },
     })
   }
 

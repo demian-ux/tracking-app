@@ -45,6 +45,7 @@ export interface CreateProjectInput {
   deliveryDate: string | null
   deliveryTimeWindow: TimeWindow | null
   viewCount: number
+  notes?: string | null
 }
 
 export const STAGE_LABELS: Record<StageType, string> = {
@@ -58,28 +59,27 @@ export const STAGE_ORDER: StageType[] = ['initial', 'advanced', 'post_production
 export const TIME_WINDOWS: TimeWindow[] = ['Midday', 'Afternoon', 'EOD']
 
 export const PROJECT_STATUS_LABELS: Record<string, string> = {
-  waiting_for_info:    'Waiting for info',
-  ready_to_start:      'Ready to start',
-  in_production:       'In production',
-  ready_to_deliver:    'Ready to deliver',
-  delivered:           'Delivered',
-  waiting_for_feedback:'Waiting for feedback',
-  revision_in_progress:'Revision in progress',
-  archived:            'Archived',
+  active:               'Active',
+  waiting_for_feedback: 'Waiting for feedback',
+  delivered:            'Delivered',
+  revision:             'Revision',
+  archived:             'Archived',
   // legacy
-  not_started:         'Not started',
-  in_progress:         'In progress',
-  waiting_for_client:  'Waiting',
+  waiting_for_info:     'Active',
+  ready_to_start:       'Active',
+  in_production:        'Active',
+  ready_to_deliver:     'Active',
+  revision_in_progress: 'Revision',
+  not_started:          'Active',
+  in_progress:          'Active',
+  waiting_for_client:   'Waiting for feedback',
 }
 
 export const ACTIVE_PROJECT_STATUSES: ProjectStatus[] = [
-  'waiting_for_info',
-  'ready_to_start',
-  'in_production',
-  'ready_to_deliver',
-  'delivered',
+  'active',
   'waiting_for_feedback',
-  'revision_in_progress',
+  'delivered',
+  'revision',
 ]
 
 export const BLOCK_REASONS = [

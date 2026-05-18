@@ -68,7 +68,6 @@ export default async function TodayPage() {
   const [
     { data: dueSoonProjects },
     { data: stagesToday },
-    { data: readyProjects },
     { data: blockedStates },
     { data: feedbackProjects },
     { data: revisionProjects },
@@ -94,16 +93,6 @@ export default async function TodayPage() {
       .order('latest_eta_date'),
 
     supabase
-      .from('projects')
-      .select(`
-        id, name, status, delivery_date, delivery_time_window,
-        current_round_number, clients ( name ),
-        delivery_rounds ( id, round_number, status )
-      `)
-      .eq('status', 'ready_to_deliver')
-      .order('name'),
-
-    supabase
       .from('view_stage_states')
       .select(`
         id, stage, status, block_reason,
@@ -123,21 +112,26 @@ export default async function TodayPage() {
     supabase
       .from('projects')
       .select('id, name, status, current_round_number, delivery_date, delivery_time_window, clients ( name )')
-      .eq('status', 'revision_in_progress')
+      .eq('status', 'revision')
       .order('name'),
   ])
 
   const dueSoonRows = (dueSoonProjects ?? []) as unknown as ProjectSummary[]
   const stageRows = (stagesToday ?? []) as unknown as StageSummary[]
-  const readyRows = (readyProjects ?? []) as unknown as ProjectSummary[]
   const blockedRows = (blockedStates ?? []) as unknown as StageSummary[]
   const feedbackRows = (feedbackProjects ?? []) as unknown as ProjectSummary[]
   const revisionRows = (revisionProjects ?? []) as unknown as ProjectSummary[]
-  const totalActionable = readyRows.length + blockedRows.length
 
   const dateStr = now.toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric',
   })
+
+  const isEmpty =
+    blockedRows.length === 0 &&
+    stageRows.length === 0 &&
+    dueSoonRows.length === 0 &&
+    feedbackRows.length === 0 &&
+    revisionRows.length === 0
 
   return (
     <div className="space-y-10">
@@ -145,33 +139,6 @@ export default async function TodayPage() {
         <h1 className="text-[15px] font-medium text-ink">Today</h1>
         <span className="text-[11px] text-ink-3">{dateStr}</span>
       </div>
-
-      {readyRows.length > 0 && (
-        <section>
-          <SectionHeader count={readyRows.length}>Ready to deliver</SectionHeader>
-          <div className="space-y-1.5">
-            {readyRows.map(p => (
-              <div key={p.id} className="flex items-center justify-between px-3 py-2.5 bg-surface border border-accent/30 rounded-md">
-                <div className="min-w-0">
-                  <div className="text-[13px] text-ink truncate">
-                    {p.clients?.name && <span className="text-ink-3">{p.clients.name} / </span>}
-                    {p.name}
-                  </div>
-                  <div className="text-[11px] text-ink-3 mt-0.5">
-                    {roundLabel(p.current_round_number ?? 0)} - {formatDelivery(p.delivery_date, p.delivery_time_window)}
-                  </div>
-                </div>
-                <Link
-                  href={`/admin/projects/${p.id}`}
-                  className="ml-4 shrink-0 px-3 py-1 bg-accent text-canvas text-[11px] font-medium rounded hover:bg-accent-dim transition-colors"
-                >
-                  Review -&gt;
-                </Link>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
 
       {blockedRows.length > 0 && (
         <section>
@@ -293,13 +260,9 @@ export default async function TodayPage() {
         </section>
       )}
 
-      {totalActionable === 0 &&
-        stageRows.length === 0 &&
-        dueSoonRows.length === 0 &&
-        feedbackRows.length === 0 &&
-        revisionRows.length === 0 && (
-          <div className="text-center py-20 text-ink-3 text-[13px]">All clear.</div>
-        )}
+      {isEmpty && (
+        <div className="text-center py-20 text-ink-3 text-[13px]">All clear.</div>
+      )}
     </div>
   )
 }
