@@ -1,83 +1,30 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
+import { revalidateProjectScreens } from '@/lib/utils/revalidate'
+import { requireAdmin } from '@/lib/actions/auth'
 import type { CreateProjectInput } from '@/lib/types/app'
 import type { TimeWindow } from '@/lib/types/database'
-import { viewLabel } from '@/lib/types/app'
-import { STAGE_ORDER } from '@/lib/types/app'
 
 export async function createProject(input: CreateProjectInput) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Not authenticated' }
+  const auth = await requireAdmin()
+  if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
+  const { supabase } = auth.data
 
-  const { data: actor } = await supabase.from('users').select('role').eq('id', user.id).single()
-  if (actor?.role !== 'admin') return { error: 'Forbidden' }
-
-  const { data: project, error: projectError } = await supabase
-    .from('projects')
-    .insert({
-      name: input.name,
-      client_id: input.clientId,
-      notes: input.notes ?? null,
-      delivery_date: input.deliveryDate,
-      delivery_time_window: input.deliveryTimeWindow,
-      view_count: input.viewCount,
-      status: 'active',
-    })
-    .select()
-    .single()
-
-  if (projectError || !project) return { error: projectError?.message ?? 'Failed to create project' }
-
-  // Create views
-  const viewInserts = Array.from({ length: input.viewCount }, (_, i) => ({
-    project_id: project.id,
-    number: i + 1,
-    label: viewLabel(i + 1),
-  }))
-
-  const { data: views, error: viewError } = await supabase
-    .from('project_views')
-    .insert(viewInserts)
-    .select()
-
-  if (viewError || !views) return { error: viewError?.message ?? 'Failed to create views' }
-
-  // Create Round 00
-  const { data: round, error: roundError } = await supabase
-    .from('delivery_rounds')
-    .insert({ project_id: project.id, round_number: 0, status: 'active' })
-    .select()
-    .single()
-
-  if (roundError || !round) return { error: roundError?.message ?? 'Failed to create round' }
-
-  // Create view_stage_states for all views × all stages
-  const stateInserts = views.flatMap(view =>
-    STAGE_ORDER.map(stage => ({
-      project_id: project.id,
-      delivery_round_id: round.id,
-      project_view_id: view.id,
-      stage,
-      status: 'not_started' as const,
-    }))
-  )
-
-  const { error: statesError } = await supabase.from('view_stage_states').insert(stateInserts)
-  if (statesError) return { error: statesError.message }
-
-  // Log event
-  await supabase.from('project_events').insert({
-    project_id: project.id,
-    actor_id: user.id,
-    event_type: 'project_created',
-    payload: { name: input.name, view_count: input.viewCount },
+  const { data, error } = await supabase.rpc('create_project_workflow_rpc', {
+    p_name: input.name,
+    p_client_id: input.clientId ?? null,
+    p_delivery_date: input.deliveryDate ?? null,
+    p_delivery_time_window: input.deliveryTimeWindow ?? null,
+    p_view_count: input.viewCount,
+    p_notes: input.notes ?? null,
   })
 
+  if (error) return { error: error.message }
+  if (!data.ok) return { error: data.error as string }
+
   revalidatePath('/admin/projects')
-  return { data: project }
+  return { data: { id: data.project_id as string } }
 }
 
 export async function updateProjectDates(
@@ -87,12 +34,9 @@ export async function updateProjectDates(
     deliveryTimeWindow?: TimeWindow | null
   }
 ) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Not authenticated' }
-
-  const { data: actor } = await supabase.from('users').select('role').eq('id', user.id).single()
-  if (actor?.role !== 'admin') return { error: 'Forbidden' }
+  const auth = await requireAdmin()
+  if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
+  const { user, supabase } = auth.data
 
   const { error } = await supabase
     .from('projects')
@@ -113,17 +57,14 @@ export async function updateProjectDates(
     })
   }
 
-  revalidatePath(`/admin/projects/${projectId}`)
+  revalidateProjectScreens(projectId)
   return { data: true }
 }
 
 export async function archiveProject(projectId: string) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Not authenticated' }
-
-  const { data: actor } = await supabase.from('users').select('role').eq('id', user.id).single()
-  if (actor?.role !== 'admin') return { error: 'Forbidden' }
+  const auth = await requireAdmin()
+  if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
+  const { user, supabase } = auth.data
 
   const { error } = await supabase
     .from('projects')
@@ -138,62 +79,30 @@ export async function archiveProject(projectId: string) {
     event_type: 'project_archived',
   })
 
-  revalidatePath('/admin/projects')
-  revalidatePath(`/admin/projects/${projectId}`)
-  revalidatePath('/app/widget')
+  revalidateProjectScreens(projectId)
   return { data: true }
 }
 
 export async function deleteProjectPermanently(projectId: string) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Not authenticated' }
+  const auth = await requireAdmin()
+  if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
+  const { supabase } = auth.data
 
-  const { data: actor } = await supabase.from('users').select('role').eq('id', user.id).single()
-  if (actor?.role !== 'admin') return { error: 'Forbidden' }
-
-  const { data: project, error: projectError } = await supabase
-    .from('projects')
-    .select('id, name')
-    .eq('id', projectId)
-    .single()
-
-  if (projectError || !project) return { error: projectError?.message ?? 'Project not found' }
-
-  await supabase.from('project_events').insert({
-    project_id: projectId,
-    actor_id: user.id,
-    event_type: 'project_archived',
-    payload: { action: 'delete_permanently_requested', project_name: project.name },
+  const { data, error } = await supabase.rpc('delete_project_permanently_rpc', {
+    p_project_id: projectId,
   })
 
-  const deleteSteps = [
-    supabase.from('stage_events').delete().eq('project_id', projectId),
-    supabase.from('project_events').delete().eq('project_id', projectId),
-    supabase.from('view_stage_states').delete().eq('project_id', projectId),
-    supabase.from('delivery_rounds').delete().eq('project_id', projectId),
-    supabase.from('project_views').delete().eq('project_id', projectId),
-    supabase.from('projects').delete().eq('id', projectId),
-  ]
+  if (error) return { error: error.message }
+  if (!data.ok) return { error: data.error as string }
 
-  for (const step of deleteSteps) {
-    const { error } = await step
-    if (error) return { error: error.message }
-  }
-
-  revalidatePath('/admin/projects')
-  revalidatePath(`/admin/projects/${projectId}`)
-  revalidatePath('/app/widget')
-  return { data: true }
+  revalidateProjectScreens(projectId)
+  return { data: { deletedName: data.deleted_name as string } }
 }
 
 export async function updateProjectStatus(projectId: string, status: string) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Not authenticated' }
-
-  const { data: actor } = await supabase.from('users').select('role').eq('id', user.id).single()
-  if (actor?.role !== 'admin') return { error: 'Forbidden' }
+  const auth = await requireAdmin()
+  if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
+  const { user, supabase } = auth.data
 
   const { error } = await supabase
     .from('projects')
@@ -209,8 +118,6 @@ export async function updateProjectStatus(projectId: string, status: string) {
     payload: { status },
   })
 
-  revalidatePath('/admin/projects')
-  revalidatePath(`/admin/projects/${projectId}`)
-  revalidatePath('/admin/today')
+  revalidateProjectScreens(projectId)
   return { data: true }
 }

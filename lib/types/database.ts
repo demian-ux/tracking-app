@@ -212,6 +212,7 @@ export interface Database {
           latest_eta_date: string | null
           latest_eta_time_window: TimeWindow | null
           block_reason: string | null
+          status_before_block: StageStatus | null
           updated_at: string
         }
         Insert: {
@@ -227,6 +228,7 @@ export interface Database {
           latest_eta_date?: string | null
           latest_eta_time_window?: TimeWindow | null
           block_reason?: string | null
+          status_before_block?: StageStatus | null
           updated_at?: string
         }
         Update: {
@@ -237,6 +239,7 @@ export interface Database {
           latest_eta_date?: string | null
           latest_eta_time_window?: TimeWindow | null
           block_reason?: string | null
+          status_before_block?: StageStatus | null
           updated_at?: string
         }
       }

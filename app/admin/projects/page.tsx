@@ -98,7 +98,7 @@ export default async function ProjectsPage() {
                   <ProgressBar value={progress} />
                 </div>
                 <ProjectBadge status={project.status} />
-                <ProjectCleanupActions projectId={project.id} projectName={project.name} compact />
+                <ProjectCleanupActions projectId={project.id} projectName={project.name} viewCount={project.view_count} compact />
               </div>
             </div>
           )

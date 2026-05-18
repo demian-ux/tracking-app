@@ -76,6 +76,7 @@ export default async function WidgetPage() {
         <WidgetClient
           projects={(projects ?? []) as unknown as Parameters<typeof WidgetClient>[0]['projects']}
           userId={user.id}
+          userRole={currentUser?.role ?? 'team_member'}
           hasError={!!projectsError}
         />
       </main>

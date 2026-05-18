@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import { markDeliverySent, createRevisionRound } from '@/lib/actions/delivery'
+import type { IncompleteItem } from '@/lib/actions/delivery'
 import { updateProjectDates, updateProjectStatus } from '@/lib/actions/projects'
 import { unblockStage } from '@/lib/actions/stages'
 import type { Project, DeliveryRound } from '@/lib/types/app'
@@ -48,12 +49,26 @@ export function ProjectDetailClient({ project, rounds, activeRound, stageStates,
 
   const blockedStates = stageStates.filter(s => s.status === 'blocked')
 
+  // Compute readiness from current stageStates prop
+  const incompleteFromProps: IncompleteItem[] = activeRound
+    ? stageStates.filter(s => s.status !== 'done').map(s => ({
+        viewLabel: views.find(v => v.id === s.project_view_id)?.label ?? '?',
+        stageLabel: STAGE_LABELS[s.stage],
+        status: s.status,
+      }))
+    : []
+
+  const deliveryReady = activeRound !== null && incompleteFromProps.length === 0
+
   function handleMarkDelivery() {
     if (!activeRound) return
     startTransition(async () => {
       const result = await markDeliverySent(project.id, activeRound.id)
-      if (result.error) setFeedback(result.error)
-      else setFeedback('Delivery marked as sent.')
+      if (result.error) {
+        setFeedback(result.error)
+      } else {
+        setFeedback('Delivery marked as sent.')
+      }
       setConfirmDelivery(false)
     })
   }
@@ -194,13 +209,36 @@ export function ProjectDetailClient({ project, rounds, activeRound, stageStates,
 
       {/* Delivery actions */}
       <div className="bg-surface border border-line rounded-md p-4">
-        <h3 className="text-[10px] tracking-[0.12em] uppercase text-ink-3 mb-3">Delivery</h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-[10px] tracking-[0.12em] uppercase text-ink-3">Delivery</h3>
+          {activeRound && (
+            <span className={`text-[10px] font-medium ${deliveryReady ? 'text-done-text' : 'text-warn-text'}`}>
+              {deliveryReady ? 'Ready' : `${incompleteFromProps.length} stage${incompleteFromProps.length > 1 ? 's' : ''} incomplete`}
+            </span>
+          )}
+        </div>
+
+        {/* Incomplete stages list */}
+        {activeRound && !deliveryReady && incompleteFromProps.length > 0 && incompleteFromProps.length <= 6 && (
+          <div className="mb-3 space-y-1">
+            {incompleteFromProps.slice(0, 6).map((item, i) => (
+              <div key={i} className="text-[11px] text-ink-3">
+                {item.viewLabel} · {item.stageLabel} — <span className="text-warn-text">{item.status}</span>
+              </div>
+            ))}
+            {incompleteFromProps.length > 6 && (
+              <div className="text-[11px] text-ink-3">…and {incompleteFromProps.length - 6} more</div>
+            )}
+          </div>
+        )}
+
         <div className="flex flex-wrap gap-2">
           {activeRound && !confirmDelivery && (
             <button
               onClick={() => setConfirmDelivery(true)}
-              disabled={isPending}
-              className="px-3 py-1.5 bg-surface text-ink text-[12px] border border-line-strong rounded-md hover:bg-elevated disabled:opacity-40 transition-colors"
+              disabled={isPending || !deliveryReady}
+              title={!deliveryReady ? `${incompleteFromProps.length} stage(s) not done` : undefined}
+              className="px-3 py-1.5 bg-surface text-ink text-[12px] border border-line-strong rounded-md hover:bg-elevated disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               Mark delivery sent
             </button>
@@ -218,13 +256,15 @@ export function ProjectDetailClient({ project, rounds, activeRound, stageStates,
               </button>
             </div>
           )}
-          <button
-            onClick={handleCreateRevision}
-            disabled={isPending}
-            className="px-3 py-1.5 bg-surface text-ink text-[12px] border border-line-strong rounded-md hover:bg-elevated disabled:opacity-40 transition-colors"
-          >
-            Create revision round
-          </button>
+          {(project.status === 'waiting_for_feedback' || project.status === 'delivered') && (
+            <button
+              onClick={handleCreateRevision}
+              disabled={isPending}
+              className="px-3 py-1.5 bg-surface text-ink text-[12px] border border-line-strong rounded-md hover:bg-elevated disabled:opacity-40 transition-colors"
+            >
+              Create revision round
+            </button>
+          )}
         </div>
       </div>
 

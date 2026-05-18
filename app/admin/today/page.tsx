@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
 import { ProjectBadge, StageBadge } from '@/components/ui/Badge'
 import { formatDelivery, roundLabel } from '@/lib/utils/formatting'
+import { getTodayISOInTimeZone, getWeekEndISOInTimeZone } from '@/lib/utils/dates'
 import { STAGE_LABELS } from '@/lib/types/app'
 import type { ProjectStatus, StageStatus, StageType, TimeWindow } from '@/lib/types/database'
 
@@ -59,11 +60,8 @@ function ProjectRow({ project, href, meta }: { project: ProjectSummary; href: st
 
 export default async function TodayPage() {
   const supabase = await createClient()
-  const now = new Date()
-  const today = now.toISOString().split('T')[0]
-  const sevenDaysFromNow = new Date(now)
-  sevenDaysFromNow.setDate(now.getDate() + 7)
-  const in7Days = sevenDaysFromNow.toISOString().split('T')[0]
+  const today = getTodayISOInTimeZone()
+  const in7Days = getWeekEndISOInTimeZone(7)
 
   const [
     { data: dueSoonProjects },
@@ -122,7 +120,8 @@ export default async function TodayPage() {
   const feedbackRows = (feedbackProjects ?? []) as unknown as ProjectSummary[]
   const revisionRows = (revisionProjects ?? []) as unknown as ProjectSummary[]
 
-  const dateStr = now.toLocaleDateString('en-US', {
+  const dateStr = new Date().toLocaleDateString('en-US', {
+    timeZone: 'America/Argentina/Buenos_Aires',
     weekday: 'long', month: 'long', day: 'numeric',
   })
 
