@@ -68,6 +68,7 @@ export function WidgetClient({ projects, userId, hasError }: WidgetClientProps) 
 
   const [views, setViews] = useState<View[]>([])
   const [round, setRound] = useState<Round | null>(null)
+  const [roundLoading, setRoundLoading] = useState(false)
   const [states, setStates] = useState<ViewState[]>([])
   const [conflictViewIds, setConflictViewIds] = useState<string[]>([])
   const [feedback, setFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
@@ -78,37 +79,44 @@ export function WidgetClient({ projects, userId, hasError }: WidgetClientProps) 
 
   const project = projects.find(p => p.id === projectId) ?? null
 
+  // Load workflow when project changes
   useEffect(() => {
     if (!projectId) return
+
     let ignore = false
     ;(async () => {
       const [{ data: v }, workflow] = await Promise.all([
-        supabase.from('project_views').select('*').eq('project_id', projectId).eq('active', true).order('number'),
+        supabase
+          .from('project_views')
+          .select('*')
+          .eq('project_id', projectId)
+          .eq('active', true)
+          .order('number'),
         ensureProjectWorkflow(projectId),
       ])
       if (ignore) return
+
       setViews(v ?? [])
+      setRoundLoading(false)
+
       if (workflow.error) {
-        setRound(null)
-        setStates([])
         setFeedback({ ok: false, msg: workflow.error })
       } else if (workflow.data) {
-        setRound(workflow.data.round)
-        setStates(workflow.data.states ?? [])
-      } else {
-        setRound(null)
-        setStates([])
+        setRound(workflow.data.round as Round)
+        setStates((workflow.data.states ?? []) as ViewState[])
       }
     })()
-    return () => {
-      ignore = true
-    }
+
+    return () => { ignore = true }
   }, [projectId, supabase])
 
   async function reloadStates() {
     if (!round) return
-    const { data } = await supabase.from('view_stage_states').select('*').eq('delivery_round_id', round.id)
-    setStates(data ?? [])
+    const { data } = await supabase
+      .from('view_stage_states')
+      .select('*')
+      .eq('delivery_round_id', round.id)
+    setStates((data ?? []) as ViewState[])
   }
 
   function getState(viewId: string, s: StageType) {
@@ -144,21 +152,35 @@ export function WidgetClient({ projects, userId, hasError }: WidgetClientProps) 
   const selectedStates = selectedViewIds.map(id => getState(id, stage as StageType)).filter(Boolean)
   const anyInProgress = selectedStates.some(s => s?.status === 'in_progress')
   const canBlock = anyInProgress && selectedViewIds.length > 0 && !!stage
-  const canAct = !!projectId && !!stage && selectedViewIds.length > 0
+
+  // Reason the Start / Mark done buttons are disabled (used for debug + UI hint)
+  const disabledReason: string | null = (() => {
+    if (isPending) return 'action running'
+    if (!projectId) return 'no project selected'
+    if (roundLoading) return 'loading workflow…'
+    if (!round) return 'no active delivery round'
+    if (!stage) return 'no stage selected'
+    if (selectedViewIds.length === 0) return 'no views selected'
+    return null
+  })()
+
+  const actionsDisabled = !!disabledReason
 
   function handleStart() {
-    if (!canAct || !round) return
+    if (actionsDisabled || !round) return
     setFeedback(null)
     startTransition(async () => {
       const result = await startStage({
-        projectId, roundId: round.id, viewIds: selectedViewIds,
+        projectId,
+        roundId: round.id,
+        viewIds: selectedViewIds,
         stage: stage as StageType,
         etaDate: etaDate || null,
         etaTimeWindow: (etaWindow || null) as TimeWindow | null,
       })
       if (result.error === 'conflict') {
         setConflictViewIds('conflictingViewIds' in result ? result.conflictingViewIds ?? [] : [])
-        setFeedback({ ok: false, msg: 'Conflict — those views are already in progress.' })
+        setFeedback({ ok: false, msg: 'Conflict — those views are already in progress by someone else.' })
       } else if (result.error) {
         setFeedback({ ok: false, msg: result.error })
       } else {
@@ -170,12 +192,14 @@ export function WidgetClient({ projects, userId, hasError }: WidgetClientProps) 
   }
 
   function handleFinish() {
-    if (!projectId || !stage || !selectedViewIds.length || !round) return
+    if (actionsDisabled || !round) return
     setFeedback(null)
     startTransition(async () => {
       const result = await finishStage({
-        projectId, roundId: round.id,
-        viewIds: selectedViewIds, stage: stage as StageType,
+        projectId,
+        roundId: round.id,
+        viewIds: selectedViewIds,
+        stage: stage as StageType,
       })
       if (result.error) {
         setFeedback({ ok: false, msg: result.error })
@@ -188,7 +212,7 @@ export function WidgetClient({ projects, userId, hasError }: WidgetClientProps) 
   }
 
   function handleBlock() {
-    if (!projectId || !stage || !selectedViewIds.length || !round || !blockReason) return
+    if (actionsDisabled || !round || !blockReason) return
     setFeedback(null)
     startTransition(async () => {
       const result = await blockStage(
@@ -219,18 +243,21 @@ export function WidgetClient({ projects, userId, hasError }: WidgetClientProps) 
         <select
           value={projectId}
           onChange={e => {
-            const nextProjectId = e.target.value
-            setProjectId(nextProjectId)
+            const next = e.target.value
+            setProjectId(next)
             setSelectedViewIds([])
-            setFeedback(null)
             setConflictViewIds([])
             setShowBlockPanel(false)
-            if (!nextProjectId) {
-              setViews([])
-              setRound(null)
-              setStates([])
-              setStage('')
-            }
+            setBlockReason('')
+            setStage('')
+            setEtaDate('')
+            setEtaWindow('')
+            setFeedback(null)
+            // Reset workflow state so stale data from the previous project is gone
+            setRound(null)
+            setStates([])
+            setViews([])
+            setRoundLoading(!!next)
           }}
           className="w-full px-3 py-2 bg-surface border border-line rounded-md text-[13px] text-ink focus:outline-none focus:border-accent transition-colors hover:border-line-strong"
         >
@@ -242,6 +269,11 @@ export function WidgetClient({ projects, userId, hasError }: WidgetClientProps) 
           ))}
         </select>
       </div>
+
+      {/* Loading indicator */}
+      {roundLoading && (
+        <p className="text-[11px] text-ink-3">Loading workflow…</p>
+      )}
 
       {/* Project info strip */}
       {project && round && (
@@ -266,12 +298,17 @@ export function WidgetClient({ projects, userId, hasError }: WidgetClientProps) 
       )}
 
       {/* Stage */}
-      {projectId && (
+      {projectId && !roundLoading && (
         <div>
           <SectionLabel>Stage</SectionLabel>
           <select
             value={stage}
-            onChange={e => { setStage(e.target.value as StageType); setSelectedViewIds([]); setFeedback(null); setShowBlockPanel(false) }}
+            onChange={e => {
+              setStage(e.target.value as StageType)
+              setSelectedViewIds([])
+              setFeedback(null)
+              setShowBlockPanel(false)
+            }}
             className="w-full px-3 py-2 bg-surface border border-line rounded-md text-[13px] text-ink focus:outline-none focus:border-accent transition-colors hover:border-line-strong"
           >
             <option value="">Select stage…</option>
@@ -338,7 +375,7 @@ export function WidgetClient({ projects, userId, hasError }: WidgetClientProps) 
         </div>
       )}
 
-      {/* ETA */}
+      {/* ETA — optional, shown whenever views are selected */}
       {selectedViewIds.length > 0 && !showBlockPanel && (
         <div>
           <SectionLabel>ETA <span className="normal-case tracking-normal text-ink-3 ml-1">— optional</span></SectionLabel>
@@ -365,16 +402,14 @@ export function WidgetClient({ projects, userId, hasError }: WidgetClientProps) 
       {showBlockPanel && selectedViewIds.length > 0 && (
         <div>
           <SectionLabel>Block reason</SectionLabel>
-          <div className="space-y-2">
-            <select
-              value={blockReason}
-              onChange={e => setBlockReason(e.target.value)}
-              className="w-full px-3 py-2 bg-surface border border-blocked-text/30 rounded-md text-[13px] text-ink focus:outline-none focus:border-blocked-text transition-colors"
-            >
-              <option value="">Select reason…</option>
-              {BLOCK_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
-            </select>
-          </div>
+          <select
+            value={blockReason}
+            onChange={e => setBlockReason(e.target.value)}
+            className="w-full px-3 py-2 bg-surface border border-blocked-text/30 rounded-md text-[13px] text-ink focus:outline-none focus:border-blocked-text transition-colors"
+          >
+            <option value="">Select reason…</option>
+            {BLOCK_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
         </div>
       )}
 
@@ -387,30 +422,35 @@ export function WidgetClient({ projects, userId, hasError }: WidgetClientProps) 
 
       {/* Actions */}
       {selectedViewIds.length > 0 && !showBlockPanel && (
-        <div className="flex gap-2 pt-1">
-          <button
-            onClick={handleStart}
-            disabled={isPending || !canAct || !round}
-            className="flex-1 h-9 bg-accent text-canvas text-[13px] font-medium rounded-md hover:bg-accent-dim disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
-            {isPending ? '…' : 'Start stage'}
-          </button>
-          <button
-            onClick={handleFinish}
-            disabled={isPending || !canAct || !round}
-            className="flex-1 h-9 bg-surface text-ink text-[13px] border border-line-strong rounded-md hover:bg-elevated disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
-            {isPending ? '…' : 'Mark done'}
-          </button>
-          {canBlock && (
+        <div className="space-y-2">
+          <div className="flex gap-2">
             <button
-              onClick={() => setShowBlockPanel(true)}
-              disabled={isPending}
-              className="h-9 px-3 bg-surface text-blocked-text text-[13px] border border-blocked-text/30 rounded-md hover:bg-blocked-bg disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              title="Report a blocker"
+              onClick={handleStart}
+              disabled={actionsDisabled}
+              className="flex-1 h-9 bg-accent text-canvas text-[13px] font-medium rounded-md hover:bg-accent-dim disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
-              Block
+              {isPending ? '…' : 'Start stage'}
             </button>
+            <button
+              onClick={handleFinish}
+              disabled={actionsDisabled}
+              className="flex-1 h-9 bg-surface text-ink text-[13px] border border-line-strong rounded-md hover:bg-elevated disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              {isPending ? '…' : 'Mark done'}
+            </button>
+            {canBlock && (
+              <button
+                onClick={() => setShowBlockPanel(true)}
+                disabled={isPending}
+                className="h-9 px-3 bg-surface text-blocked-text text-[13px] border border-blocked-text/30 rounded-md hover:bg-blocked-bg disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                title="Report a blocker"
+              >
+                Block
+              </button>
+            )}
+          </div>
+          {actionsDisabled && disabledReason && (
+            <p className="text-[11px] text-ink-3">Waiting: {disabledReason}</p>
           )}
         </div>
       )}
@@ -432,6 +472,17 @@ export function WidgetClient({ projects, userId, hasError }: WidgetClientProps) 
           >
             Cancel
           </button>
+        </div>
+      )}
+
+      {/* Dev debug panel */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className="mt-4 p-3 bg-surface border border-line rounded-md font-mono text-[10px] text-ink-3 space-y-0.5">
+          <div>project: {projectId || '—'}</div>
+          <div>round:   {round?.id ?? (roundLoading ? 'loading…' : '—')}</div>
+          <div>stage:   {stage || '—'}</div>
+          <div>views:   {selectedViewIds.length ? selectedViewIds.map(id => views.find(v => v.id === id)?.label ?? id).join(', ') : '—'}</div>
+          <div>disabled: {disabledReason ?? 'none — button should be active'}</div>
         </div>
       )}
     </div>
