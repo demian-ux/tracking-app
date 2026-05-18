@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import { markDeliverySent, createRevisionRound } from '@/lib/actions/delivery'
-import { updateProjectDates, archiveProject, updateProjectStatus } from '@/lib/actions/projects'
+import { updateProjectDates, updateProjectStatus } from '@/lib/actions/projects'
 import { unblockStage } from '@/lib/actions/stages'
 import type { Project, DeliveryRound } from '@/lib/types/app'
 import type { TimeWindow, StageType } from '@/lib/types/database'
@@ -63,14 +63,6 @@ export function ProjectDetailClient({ project, rounds, activeRound, stageStates,
       const result = await createRevisionRound(project.id)
       if (result.error) setFeedback(result.error)
       else setFeedback('Revision round created.')
-    })
-  }
-
-  function handleArchive() {
-    if (!confirm(`Archive "${project.name}"? This cannot be undone easily.`)) return
-    startTransition(async () => {
-      const result = await archiveProject(project.id)
-      if (result.error) setFeedback(result.error)
     })
   }
 
@@ -260,17 +252,6 @@ export function ProjectDetailClient({ project, rounds, activeRound, stageStates,
           </div>
         </div>
       )}
-
-      {/* Danger zone */}
-      <div className="flex items-center justify-between py-1">
-        <button
-          onClick={handleArchive}
-          disabled={isPending}
-          className="text-[11px] text-ink-3 hover:text-blocked-text transition-colors"
-        >
-          Archive project
-        </button>
-      </div>
 
       {feedback && (
         <p className="text-[12px] text-ink-2">{feedback}</p>

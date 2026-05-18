@@ -3,11 +3,125 @@
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import type { StartStageInput, FinishStageInput } from '@/lib/types/app'
+import type { StageType } from '@/lib/types/database'
+import { STAGE_ORDER } from '@/lib/types/app'
+
+interface WorkflowRound {
+  id: string
+  project_id: string
+  round_number: number
+  status: string
+}
+
+interface WorkflowView {
+  id: string
+}
+
+interface WorkflowState {
+  id: string
+  project_view_id: string
+  stage: StageType
+  status: string
+}
+
+export async function ensureProjectWorkflow(projectId: string) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  const { data: project, error: projectError } = await supabase
+    .from('projects')
+    .select('id, status, current_round_number')
+    .eq('id', projectId)
+    .single()
+
+  if (projectError || !project) return { error: projectError?.message ?? 'Project not found.' }
+  if (project.status === 'archived') return { error: 'This project is archived.' }
+
+  const { data: views, error: viewsError } = await supabase
+    .from('project_views')
+    .select('id')
+    .eq('project_id', projectId)
+    .eq('active', true)
+
+  if (viewsError) return { error: viewsError.message }
+  if (!views?.length) return { error: 'This project has no active views.' }
+
+  const { data: existingRounds, error: roundsError } = await supabase
+    .from('delivery_rounds')
+    .select('id, project_id, round_number, status')
+    .eq('project_id', projectId)
+    .in('status', ['active', 'ready_for_admin_review'])
+    .order('round_number', { ascending: false })
+
+  if (roundsError) return { error: roundsError.message }
+
+  let round = existingRounds?.[0] as WorkflowRound | undefined
+
+  if (!round) {
+    const { data: createdRound, error: createRoundError } = await supabase
+      .from('delivery_rounds')
+      .insert({
+        project_id: projectId,
+        round_number: project.current_round_number ?? 0,
+        status: 'active',
+      })
+      .select('id, project_id, round_number, status')
+      .single()
+
+    if (createRoundError || !createdRound) {
+      return { error: createRoundError?.message ?? 'No active delivery round exists and one could not be created.' }
+    }
+    round = createdRound as WorkflowRound
+  }
+
+  const { data: existingStates, error: statesError } = await supabase
+    .from('view_stage_states')
+    .select('id, project_view_id, stage, status')
+    .eq('delivery_round_id', round.id)
+
+  if (statesError) return { error: statesError.message }
+
+  const existingKeys = new Set(
+    ((existingStates ?? []) as WorkflowState[]).map(state => `${state.project_view_id}:${state.stage}`)
+  )
+  const missingStates = (views as WorkflowView[]).flatMap(view =>
+    STAGE_ORDER
+      .filter(stage => !existingKeys.has(`${view.id}:${stage}`))
+      .map(stage => ({
+        project_id: projectId,
+        delivery_round_id: round.id,
+        project_view_id: view.id,
+        stage,
+        status: 'not_started' as const,
+      }))
+  )
+
+  if (missingStates.length > 0) {
+    const { error: insertStatesError } = await supabase
+      .from('view_stage_states')
+      .insert(missingStates)
+
+    if (insertStatesError) return { error: insertStatesError.message }
+  }
+
+  const { data: refreshedStates, error: refreshError } = await supabase
+    .from('view_stage_states')
+    .select('*')
+    .eq('delivery_round_id', round.id)
+
+  if (refreshError) return { error: refreshError.message }
+
+  return { data: { round, states: refreshedStates ?? [] } }
+}
 
 export async function startStage(input: StartStageInput) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: 'Not authenticated' }
+
+  const ensured = await ensureProjectWorkflow(input.projectId)
+  if (ensured.error) return { error: ensured.error }
 
   // Check for conflicts: another user already in_progress on same view+stage
   const { data: conflicts } = await supabase
@@ -17,7 +131,6 @@ export async function startStage(input: StartStageInput) {
     .in('project_view_id', input.viewIds)
     .eq('stage', input.stage)
     .eq('status', 'in_progress')
-    .neq('assigned_user_id', user.id)
 
   if (conflicts && conflicts.length > 0) {
     return {
@@ -42,6 +155,20 @@ export async function startStage(input: StartStageInput) {
     .eq('stage', input.stage)
 
   if (updateError) return { error: updateError.message }
+  if (input.viewIds.length > 0 && updateError === null) {
+    const { data: updatedRows, error: verifyError } = await supabase
+      .from('view_stage_states')
+      .select('id')
+      .eq('delivery_round_id', input.roundId)
+      .in('project_view_id', input.viewIds)
+      .eq('stage', input.stage)
+      .eq('status', 'in_progress')
+
+    if (verifyError) return { error: verifyError.message }
+    if ((updatedRows?.length ?? 0) < input.viewIds.length) {
+      return { error: 'Start blocked because one or more selected stage rows are missing.' }
+    }
+  }
 
   const events = input.viewIds.map(viewId => ({
     project_id: input.projectId,
@@ -194,49 +321,4 @@ export async function reopenStage(
 
   revalidatePath(`/admin/projects/${projectId}`)
   return { data: true }
-}
-
-// Creates a delivery round + view_stage_states for a project that is missing one.
-// Recovers projects where the round insert failed mid-flight during creation.
-export async function initializeRound(projectId: string) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Not authenticated' }
-
-  const { data: actor } = await supabase.from('users').select('role').eq('id', user.id).single()
-  if (actor?.role !== 'admin') return { error: 'Forbidden' }
-
-  const { data: views, error: viewsError } = await supabase
-    .from('project_views')
-    .select('id')
-    .eq('project_id', projectId)
-    .eq('active', true)
-
-  if (viewsError || !views?.length) return { error: 'No views found for this project.' }
-
-  const { data: round, error: roundError } = await supabase
-    .from('delivery_rounds')
-    .insert({ project_id: projectId, round_number: 0, status: 'active' })
-    .select()
-    .single()
-
-  if (roundError || !round) return { error: roundError?.message ?? 'Failed to create round.' }
-
-  const { STAGE_ORDER } = await import('@/lib/types/app')
-  const states = views.flatMap(view =>
-    STAGE_ORDER.map(stage => ({
-      project_id: projectId,
-      delivery_round_id: round.id,
-      project_view_id: view.id,
-      stage,
-      status: 'not_started' as const,
-    }))
-  )
-
-  const { error: statesError } = await supabase.from('view_stage_states').insert(states)
-  if (statesError) return { error: statesError.message }
-
-  revalidatePath('/app/widget')
-  revalidatePath(`/admin/projects/${projectId}`)
-  return { data: round }
 }

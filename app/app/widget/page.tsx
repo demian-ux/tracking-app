@@ -18,7 +18,17 @@ export default async function WidgetPage() {
     supabase
       .from('projects')
       .select('id, name, status, delivery_date, delivery_time_window, current_round_number, view_count, clients ( name )')
-      .not('status', 'eq', 'archived')
+      .in('status', [
+        'active',
+        'revision',
+        'waiting_for_info',
+        'ready_to_start',
+        'in_production',
+        'ready_to_deliver',
+        'revision_in_progress',
+        'not_started',
+        'in_progress',
+      ])
       .order('name'),
     supabase
       .from('users')

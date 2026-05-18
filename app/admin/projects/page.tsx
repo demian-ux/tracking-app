@@ -5,6 +5,7 @@ import { ProgressBar } from '@/components/ui/ProgressBar'
 import { formatDelivery, roundLabel } from '@/lib/utils/formatting'
 import { calculateProgress } from '@/lib/utils/progress'
 import type { ProjectStatus, StageStatus, TimeWindow } from '@/lib/types/database'
+import { ProjectCleanupActions } from '@/components/admin/ProjectCleanupActions'
 
 interface ProjectListRow {
   id: string
@@ -73,12 +74,11 @@ export default async function ProjectsPage() {
           const progress = calculateProgress(activeStates)
 
           return (
-            <Link
+            <div
               key={project.id}
-              href={`/admin/projects/${project.id}`}
               className="flex items-center justify-between gap-4 bg-surface border border-line rounded-md px-4 py-3 hover:border-line-strong hover:bg-elevated transition-colors"
             >
-              <div className="min-w-0 flex-1">
+              <Link href={`/admin/projects/${project.id}`} className="min-w-0 flex-1">
                 <div className="text-[13px] text-ink truncate">
                   {project.clients?.name && (
                     <span className="text-ink-3">{project.clients.name} / </span>
@@ -92,14 +92,15 @@ export default async function ProjectsPage() {
                   <span>-</span>
                   <span>{formatDelivery(project.delivery_date, project.delivery_time_window)}</span>
                 </div>
-              </div>
+              </Link>
               <div className="flex items-center gap-3 shrink-0">
                 <div className="w-20">
                   <ProgressBar value={progress} />
                 </div>
                 <ProjectBadge status={project.status} />
+                <ProjectCleanupActions projectId={project.id} projectName={project.name} compact />
               </div>
-            </Link>
+            </div>
           )
         })}
       </div>

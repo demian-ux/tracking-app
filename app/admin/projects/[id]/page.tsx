@@ -7,6 +7,7 @@ import { calculateProgress } from '@/lib/utils/progress'
 import { formatDelivery, roundLabel } from '@/lib/utils/formatting'
 import { ProjectDetailClient } from '@/components/admin/ProjectDetailClient'
 import { STAGE_LABELS, STAGE_ORDER } from '@/lib/types/app'
+import { ProjectCleanupActions } from '@/components/admin/ProjectCleanupActions'
 
 interface Props {
   params: Promise<{ id: string }>
@@ -68,9 +69,12 @@ export default async function ProjectDetailPage({ params }: Props) {
             <span>{project.delivery_count} deliveries</span>
           </div>
         </div>
-        <Link href="/admin/projects" className="text-[12px] text-ink-3 hover:text-ink-2 transition-colors">
-          &lt;- Back
-        </Link>
+        <div className="flex items-center gap-3">
+          <ProjectCleanupActions projectId={project.id} projectName={project.name} afterDeleteHref="/admin/projects" />
+          <Link href="/admin/projects" className="text-[12px] text-ink-3 hover:text-ink-2 transition-colors">
+            &lt;- Back
+          </Link>
+        </div>
       </div>
 
       <div className="grid grid-cols-3 gap-3">
