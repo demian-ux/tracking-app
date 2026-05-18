@@ -111,7 +111,6 @@ export interface Database {
           id: string
           client_id: string | null
           name: string
-          notes: string | null
           status: ProjectStatus
           delivery_date: string | null
           delivery_time_window: TimeWindow | null
@@ -125,7 +124,6 @@ export interface Database {
           id?: string
           client_id?: string | null
           name: string
-          notes?: string | null
           status?: ProjectStatus
           delivery_date?: string | null
           delivery_time_window?: TimeWindow | null
@@ -138,7 +136,6 @@ export interface Database {
         Update: {
           client_id?: string | null
           name?: string
-          notes?: string | null
           status?: ProjectStatus
           delivery_date?: string | null
           delivery_time_window?: TimeWindow | null

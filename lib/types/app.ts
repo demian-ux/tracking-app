@@ -45,7 +45,6 @@ export interface CreateProjectInput {
   deliveryDate: string | null
   deliveryTimeWindow: TimeWindow | null
   viewCount: number
-  notes?: string | null
 }
 
 export const STAGE_LABELS: Record<StageType, string> = {

@@ -109,17 +109,11 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3">
         <div className="bg-surface border border-line rounded-md p-4">
           <div className="text-[10px] tracking-[0.12em] uppercase text-ink-3 mb-2">Delivery</div>
           <div className="text-[13px] text-ink">
             {formatDelivery(project.delivery_date, project.delivery_time_window)}
-          </div>
-        </div>
-        <div className="bg-surface border border-line rounded-md p-4">
-          <div className="text-[10px] tracking-[0.12em] uppercase text-ink-3 mb-2">Notes</div>
-          <div className="text-[13px] text-ink truncate" title={project.notes ?? undefined}>
-            {project.notes ?? <span className="text-ink-3">—</span>}
           </div>
         </div>
         <div className="bg-surface border border-line rounded-md p-4">

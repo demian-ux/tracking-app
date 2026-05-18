@@ -17,7 +17,6 @@ export async function createProject(input: CreateProjectInput) {
     .insert({
       name: input.name,
       client_id: input.clientId ?? null,
-      notes: input.notes ?? null,
       delivery_date: input.deliveryDate ?? null,
       delivery_time_window: input.deliveryTimeWindow ?? null,
       view_count: input.viewCount,

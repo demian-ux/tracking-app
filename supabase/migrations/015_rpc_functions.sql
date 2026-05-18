@@ -503,8 +503,7 @@ CREATE OR REPLACE FUNCTION public.create_project_workflow_rpc(
   p_client_id              uuid         DEFAULT NULL,
   p_delivery_date          date         DEFAULT NULL,
   p_delivery_time_window   public.time_window DEFAULT NULL,
-  p_view_count             int          DEFAULT 1,
-  p_notes                  text         DEFAULT NULL
+  p_view_count             int          DEFAULT 1
 )
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -531,8 +530,8 @@ BEGIN
   END IF;
 
   -- Insert project
-  INSERT INTO public.projects (name, client_id, notes, delivery_date, delivery_time_window, view_count, status)
-  VALUES (p_name, p_client_id, p_notes, p_delivery_date, p_delivery_time_window, p_view_count, 'active')
+  INSERT INTO public.projects (name, client_id, delivery_date, delivery_time_window, view_count, status)
+  VALUES (p_name, p_client_id, p_delivery_date, p_delivery_time_window, p_view_count, 'active')
   RETURNING id INTO v_project_id;
 
   -- Insert views
