@@ -5,7 +5,7 @@ import { markDeliverySent, createRevisionRound } from '@/lib/actions/delivery'
 import type { IncompleteItem } from '@/lib/actions/delivery'
 import { updateProjectDates, updateProjectStatus, updateProjectViewCount } from '@/lib/actions/projects'
 import { unblockStage } from '@/lib/actions/stages'
-import type { Project, DeliveryRound } from '@/lib/types/app'
+import type { Project, ProjectViewRound } from '@/lib/types/app'
 import type { TimeWindow, StageType } from '@/lib/types/database'
 import { TIME_WINDOWS, roundLabel, STAGE_LABELS, ACTIVE_PROJECT_STATUSES, PROJECT_STATUS_LABELS } from '@/lib/types/app'
 import { formatDelivery } from '@/lib/utils/formatting'
@@ -13,7 +13,7 @@ import { formatDelivery } from '@/lib/utils/formatting'
 interface ViewStageStateWithUser {
   id: string
   project_view_id: string
-  delivery_round_id: string
+  project_view_round_id: string
   stage: StageType
   status: string
   block_reason: string | null
@@ -29,15 +29,14 @@ interface ViewInfo {
 
 interface Props {
   project: Project
-  rounds: DeliveryRound[]
-  activeRound: DeliveryRound | null
+  viewRounds: ProjectViewRound[]
   stageStates: ViewStageStateWithUser[]
   views: ViewInfo[]
 }
 
 const fieldClass = 'w-full px-2.5 py-2 bg-canvas border border-line rounded-md text-[13px] text-ink focus:outline-none focus:border-accent transition-colors [color-scheme:dark]'
 
-export function ProjectDetailClient({ project, rounds, activeRound, stageStates, views }: Props) {
+export function ProjectDetailClient({ project, viewRounds, stageStates, views }: Props) {
   const [isPending, startTransition] = useTransition()
   const [feedback, setFeedback] = useState<string | null>(null)
   const [confirmDelivery, setConfirmDelivery] = useState(false)
@@ -50,37 +49,75 @@ export function ProjectDetailClient({ project, rounds, activeRound, stageStates,
   const [deliveryDate, setDeliveryDate] = useState(project.delivery_date ?? '')
   const [deliveryWindow, setDeliveryWindow] = useState<TimeWindow | ''>(project.delivery_time_window ?? '')
 
+  // Per-view delivery/revision selection
+  const [viewsToDeliver, setViewsToDeliver] = useState<string[]>([])
+  const [viewsToRevise, setViewsToRevise] = useState<string[]>([])
+
   const blockedStates = stageStates.filter(s => s.status === 'blocked')
 
-  // Compute readiness from current stageStates prop
-  const incompleteFromProps: IncompleteItem[] = activeRound
-    ? stageStates.filter(s => s.status !== 'done').map(s => ({
-        viewLabel: views.find(v => v.id === s.project_view_id)?.label ?? '?',
+  // Active rounds
+  const activeRounds = viewRounds.filter(r => r.status === 'active')
+
+  // Compute readiness per view: all stages done in active round
+  const viewReadiness = views.map(view => {
+    const activeRound = activeRounds.find(r => r.project_view_id === view.id)
+    if (!activeRound) return { view, ready: false, incomplete: [] as IncompleteItem[] }
+
+    const viewStates = stageStates.filter(
+      s => s.project_view_id === view.id && s.project_view_round_id === activeRound.id
+    )
+    const incomplete: IncompleteItem[] = viewStates
+      .filter(s => s.status !== 'done')
+      .map(s => ({
+        viewLabel: view.label,
         stageLabel: STAGE_LABELS[s.stage],
         status: s.status,
       }))
-    : []
+    return { view, ready: incomplete.length === 0 && viewStates.length > 0, incomplete }
+  })
 
-  const deliveryReady = activeRound !== null && incompleteFromProps.length === 0
+  // Views whose latest round is 'delivered' (eligible for revision)
+  const deliveredViews = views.filter(view => {
+    const rounds = viewRounds.filter(r => r.project_view_id === view.id)
+    const latestRound = rounds.sort((a, b) => b.round_number - a.round_number)[0]
+    return latestRound?.status === 'delivered'
+  })
+
+  function toggleViewToDeliver(viewId: string) {
+    setViewsToDeliver(prev =>
+      prev.includes(viewId) ? prev.filter(id => id !== viewId) : [...prev, viewId]
+    )
+  }
+
+  function toggleViewToRevise(viewId: string) {
+    setViewsToRevise(prev =>
+      prev.includes(viewId) ? prev.filter(id => id !== viewId) : [...prev, viewId]
+    )
+  }
 
   function handleMarkDelivery() {
-    if (!activeRound) return
+    if (viewsToDeliver.length === 0) return
     startTransition(async () => {
-      const result = await markDeliverySent(project.id, activeRound.id)
+      const result = await markDeliverySent(project.id, viewsToDeliver)
       if (result.error) {
         setFeedback(result.error)
       } else {
         setFeedback('Delivery marked as sent.')
+        setViewsToDeliver([])
       }
       setConfirmDelivery(false)
     })
   }
 
   function handleCreateRevision() {
+    if (viewsToRevise.length === 0) return
     startTransition(async () => {
-      const result = await createRevisionRound(project.id)
+      const result = await createRevisionRound(project.id, viewsToRevise)
       if (result.error) setFeedback(result.error)
-      else setFeedback('Revision round created.')
+      else {
+        setFeedback('Revision round created.')
+        setViewsToRevise([])
+      }
     })
   }
 
@@ -118,14 +155,14 @@ export function ProjectDetailClient({ project, rounds, activeRound, stageStates,
   function handleUnblock(state: ViewStageStateWithUser) {
     startTransition(async () => {
       const result = await unblockStage(
-        project.id, state.delivery_round_id, state.project_view_id, state.stage,
+        project.id, state.project_view_id, state.stage,
       )
       if (result.error) setFeedback(result.error)
       else setFeedback('Stage unblocked.')
     })
   }
 
-  const viewLabel = (viewId: string) => views.find(v => v.id === viewId)?.label ?? '—'
+  const getViewLabel = (viewId: string) => views.find(v => v.id === viewId)?.label ?? '—'
 
   return (
     <div className="space-y-3">
@@ -141,7 +178,7 @@ export function ProjectDetailClient({ project, rounds, activeRound, stageStates,
               <div key={state.id} className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <span className="text-[12px] text-ink-2">
-                    {viewLabel(state.project_view_id)}
+                    {getViewLabel(state.project_view_id)}
                   </span>
                   <span className="text-ink-3 mx-1.5">·</span>
                   <span className="text-[12px] text-ink-2">{STAGE_LABELS[state.stage]}</span>
@@ -261,33 +298,47 @@ export function ProjectDetailClient({ project, rounds, activeRound, stageStates,
       <div className="bg-surface border border-line rounded-md p-4">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-[10px] tracking-[0.12em] uppercase text-ink-3">Delivery</h3>
-          {activeRound && (
-            <span className={`text-[10px] font-medium ${deliveryReady ? 'text-done-text' : 'text-warn-text'}`}>
-              {deliveryReady ? 'Ready' : `${incompleteFromProps.length} stage${incompleteFromProps.length > 1 ? 's' : ''} incomplete`}
-            </span>
+          {viewsToDeliver.length > 0 && (
+            <span className="text-[10px] text-ink-2">{viewsToDeliver.length} view{viewsToDeliver.length > 1 ? 's' : ''} selected</span>
           )}
         </div>
 
-        {/* Incomplete stages list */}
-        {activeRound && !deliveryReady && incompleteFromProps.length > 0 && incompleteFromProps.length <= 6 && (
-          <div className="mb-3 space-y-1">
-            {incompleteFromProps.slice(0, 6).map((item, i) => (
-              <div key={i} className="text-[11px] text-ink-3">
-                {item.viewLabel} · {item.stageLabel} — <span className="text-warn-text">{item.status}</span>
-              </div>
+        {/* Per-view readiness checkboxes */}
+        {activeRounds.length > 0 && (
+          <div className="mb-3 space-y-1.5">
+            {viewReadiness.map(({ view, ready, incomplete }) => (
+              <label key={view.id} className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={viewsToDeliver.includes(view.id)}
+                  onChange={() => toggleViewToDeliver(view.id)}
+                  disabled={!ready || isPending}
+                  className="mt-0.5 shrink-0"
+                />
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[12px] text-ink-2">{view.label}</span>
+                    <span className={`text-[10px] font-medium ${ready ? 'text-done-text' : 'text-warn-text'}`}>
+                      {ready ? 'Ready' : `${incomplete.length} incomplete`}
+                    </span>
+                  </div>
+                  {!ready && incomplete.length > 0 && incomplete.length <= 3 && (
+                    <div className="text-[10px] text-ink-3">
+                      {incomplete.map(item => `${item.stageLabel} (${item.status})`).join(', ')}
+                    </div>
+                  )}
+                </div>
+              </label>
             ))}
-            {incompleteFromProps.length > 6 && (
-              <div className="text-[11px] text-ink-3">…and {incompleteFromProps.length - 6} more</div>
-            )}
           </div>
         )}
 
         <div className="flex flex-wrap gap-2">
-          {activeRound && !confirmDelivery && (
+          {activeRounds.length > 0 && !confirmDelivery && (
             <button
               onClick={() => setConfirmDelivery(true)}
-              disabled={isPending || !deliveryReady}
-              title={!deliveryReady ? `${incompleteFromProps.length} stage(s) not done` : undefined}
+              disabled={isPending || viewsToDeliver.length === 0}
+              title={viewsToDeliver.length === 0 ? 'Select ready views to deliver' : undefined}
               className="px-3 py-1.5 bg-surface text-ink text-[12px] border border-line-strong rounded-md hover:bg-elevated disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               Mark delivery sent
@@ -296,7 +347,7 @@ export function ProjectDetailClient({ project, rounds, activeRound, stageStates,
           {confirmDelivery && (
             <div className="flex items-center gap-2">
               <span className="text-[12px] text-ink-2">
-                Confirm {roundLabel(project.current_round_number)} delivered?
+                Confirm {viewsToDeliver.length} view{viewsToDeliver.length > 1 ? 's' : ''} delivered?
               </span>
               <button onClick={handleMarkDelivery} disabled={isPending} className="px-3 py-1.5 bg-accent text-canvas text-[12px] font-medium rounded-md hover:bg-accent-dim disabled:opacity-40 transition-colors">
                 Confirm
@@ -306,40 +357,49 @@ export function ProjectDetailClient({ project, rounds, activeRound, stageStates,
               </button>
             </div>
           )}
-          {(project.status === 'waiting_for_feedback' || project.status === 'delivered') && (
-            <button
-              onClick={handleCreateRevision}
-              disabled={isPending}
-              className="px-3 py-1.5 bg-surface text-ink text-[12px] border border-line-strong rounded-md hover:bg-elevated disabled:opacity-40 transition-colors"
-            >
-              Create revision round
-            </button>
-          )}
         </div>
       </div>
 
-      {/* Rounds list */}
-      {rounds.length > 0 && (
+      {/* Revision panel */}
+      {(project.status === 'waiting_for_feedback' || project.status === 'delivered') && deliveredViews.length > 0 && (
         <div className="bg-surface border border-line rounded-md p-4">
-          <h3 className="text-[10px] tracking-[0.12em] uppercase text-ink-3 mb-3">Rounds</h3>
-          <div className="space-y-1.5">
-            {rounds.map(round => (
-              <div key={round.id} className="flex items-center justify-between">
-                <span className="text-[12px] text-ink-2">{roundLabel(round.round_number)}</span>
-                <span className={`text-[10px] px-2 py-0.5 rounded-full ${
-                  round.status === 'delivered'
-                    ? 'bg-done-bg text-done-text'
-                    : round.status === 'active'
-                      ? 'bg-progress-bg text-progress-text'
-                      : 'bg-warn-bg text-warn-text'
-                }`}>
-                  {round.status === 'delivered' ? 'Delivered'
-                    : round.status === 'active' ? 'Active'
-                    : 'Revision requested'}
-                </span>
-              </div>
-            ))}
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-[10px] tracking-[0.12em] uppercase text-ink-3">Revision</h3>
+            {viewsToRevise.length > 0 && (
+              <span className="text-[10px] text-ink-2">{viewsToRevise.length} view{viewsToRevise.length > 1 ? 's' : ''} selected</span>
+            )}
           </div>
+
+          <div className="mb-3 space-y-1.5">
+            {deliveredViews.map(view => {
+              const latestRound = viewRounds
+                .filter(r => r.project_view_id === view.id)
+                .sort((a, b) => b.round_number - a.round_number)[0]
+              return (
+                <label key={view.id} className="flex items-center gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={viewsToRevise.includes(view.id)}
+                    onChange={() => toggleViewToRevise(view.id)}
+                    disabled={isPending}
+                    className="shrink-0"
+                  />
+                  <span className="text-[12px] text-ink-2">{view.label}</span>
+                  {latestRound && (
+                    <span className="text-[10px] text-ink-3">{roundLabel(latestRound.round_number)} delivered</span>
+                  )}
+                </label>
+              )
+            })}
+          </div>
+
+          <button
+            onClick={handleCreateRevision}
+            disabled={isPending || viewsToRevise.length === 0}
+            className="px-3 py-1.5 bg-surface text-ink text-[12px] border border-line-strong rounded-md hover:bg-elevated disabled:opacity-40 transition-colors"
+          >
+            Create revision round
+          </button>
         </div>
       )}
 

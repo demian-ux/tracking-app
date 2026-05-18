@@ -4,7 +4,7 @@ export type User = Database['public']['Tables']['users']['Row']
 export type Client = Database['public']['Tables']['clients']['Row']
 export type Project = Database['public']['Tables']['projects']['Row']
 export type ProjectView = Database['public']['Tables']['project_views']['Row']
-export type DeliveryRound = Database['public']['Tables']['delivery_rounds']['Row']
+export type ProjectViewRound = Database['public']['Tables']['project_view_rounds']['Row']
 export type ViewStageState = Database['public']['Tables']['view_stage_states']['Row']
 export type StageEvent = Database['public']['Tables']['stage_events']['Row']
 export type ProjectEvent = Database['public']['Tables']['project_events']['Row']
@@ -15,17 +15,16 @@ export interface ProjectWithClient extends Project {
 
 export interface ProjectWithDetails extends Project {
   clients: Client | null
-  delivery_rounds: DeliveryRound[]
+  project_view_rounds: ProjectViewRound[]
   project_views: ProjectView[]
 }
 
-export interface RoundWithStates extends DeliveryRound {
+export interface ViewRoundWithStates extends ProjectViewRound {
   view_stage_states: ViewStageState[]
 }
 
 export interface StartStageInput {
   projectId: string
-  roundId: string
   viewIds: string[]
   stage: StageType
   etaDate: string | null
@@ -34,7 +33,6 @@ export interface StartStageInput {
 
 export interface FinishStageInput {
   projectId: string
-  roundId: string
   viewIds: string[]
   stage: StageType
 }

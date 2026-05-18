@@ -6,19 +6,15 @@ import { ProgressBar } from '@/components/ui/ProgressBar'
 import { calculateProgress } from '@/lib/utils/progress'
 import { formatDelivery, roundLabel } from '@/lib/utils/formatting'
 import { ProjectDetailClient } from '@/components/admin/ProjectDetailClient'
-import { RoundSelector } from '@/components/admin/RoundSelector'
 import { STAGE_LABELS, STAGE_ORDER } from '@/lib/types/app'
 import { ProjectCleanupActions } from '@/components/admin/ProjectCleanupActions'
-import { getCurrentRoundFromList } from '@/lib/utils/rounds'
 
 interface Props {
   params: Promise<{ id: string }>
-  searchParams: Promise<{ round?: string }>
 }
 
-export default async function ProjectDetailPage({ params, searchParams }: Props) {
+export default async function ProjectDetailPage({ params }: Props) {
   const { id } = await params
-  const { round: roundParam } = await searchParams
   const supabase = await createClient()
 
   const { data: project } = await supabase
@@ -29,8 +25,8 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
 
   if (!project) notFound()
 
-  const { data: rounds } = await supabase
-    .from('delivery_rounds')
+  const { data: viewRounds } = await supabase
+    .from('project_view_rounds')
     .select('*')
     .eq('project_id', id)
     .order('round_number')
@@ -42,39 +38,16 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
     .eq('active', true)
     .order('number')
 
-  // activeRound = the current working round, used for delivery/revision action panel
-  const activeRound = rounds ? getCurrentRoundFromList(rounds, project) : null
+  const activeRoundIds = (viewRounds ?? []).filter(r => r.status === 'active').map(r => r.id)
 
-  // selectedRound = the round shown in the stage grid (driven by ?round= URL param)
-  const selectedRoundNumber =
-    roundParam !== undefined
-      ? parseInt(roundParam, 10)
-      : (activeRound?.round_number ?? project.current_round_number)
-  const selectedRound =
-    rounds?.find(r => r.round_number === selectedRoundNumber) ?? activeRound
-
-  // Fetch states for the action panel (always active round)
-  const { data: activeStageStates } = activeRound
+  const { data: stageStates } = activeRoundIds.length > 0
     ? await supabase
         .from('view_stage_states')
         .select('*, users ( name )')
-        .eq('delivery_round_id', activeRound.id)
+        .in('project_view_round_id', activeRoundIds)
     : { data: [] }
 
-  // Fetch states for the stage grid (selected round; reuse if same)
-  const gridStageStates =
-    selectedRound?.id === activeRound?.id
-      ? activeStageStates
-      : selectedRound
-        ? (
-            await supabase
-              .from('view_stage_states')
-              .select('*, users ( name )')
-              .eq('delivery_round_id', selectedRound.id)
-          ).data ?? []
-        : []
-
-  const progress = calculateProgress(activeStageStates ?? [])
+  const progress = calculateProgress(stageStates ?? [])
 
   return (
     <div className="space-y-8">
@@ -126,9 +99,8 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
 
       <ProjectDetailClient
         project={project}
-        rounds={rounds ?? []}
-        activeRound={activeRound ?? null}
-        stageStates={activeStageStates ?? []}
+        viewRounds={viewRounds ?? []}
+        stageStates={stageStates ?? []}
         views={views ?? []}
       />
 
@@ -136,35 +108,38 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
         <div>
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-[11px] tracking-[0.12em] uppercase text-ink-3">
-              {selectedRound
-                ? `${roundLabel(selectedRound.round_number)} — View stages`
-                : 'View stages'}
+              View stages
             </h2>
-            <RoundSelector
-              rounds={rounds ?? []}
-              selectedRoundNumber={selectedRoundNumber}
-            />
           </div>
 
-          {selectedRound ? (
-            <div className="bg-surface border border-line rounded-md overflow-hidden">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-line">
-                    <th className="text-left px-4 py-2.5 text-[10px] tracking-[0.12em] uppercase text-ink-3 w-20">View</th>
-                    {STAGE_ORDER.map(stage => (
-                      <th key={stage} className="text-left px-4 py-2.5 text-[10px] tracking-[0.12em] uppercase text-ink-3">
-                        {STAGE_LABELS[stage]}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {views.map((view, i) => (
+          <div className="bg-surface border border-line rounded-md overflow-hidden">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-line">
+                  <th className="text-left px-4 py-2.5 text-[10px] tracking-[0.12em] uppercase text-ink-3 w-24">View</th>
+                  {STAGE_ORDER.map(stage => (
+                    <th key={stage} className="text-left px-4 py-2.5 text-[10px] tracking-[0.12em] uppercase text-ink-3">
+                      {STAGE_LABELS[stage]}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {views.map((view, i) => {
+                  // Find the active round for this view
+                  const activeRound = (viewRounds ?? []).find(
+                    r => r.project_view_id === view.id && r.status === 'active'
+                  )
+                  return (
                     <tr key={view.id} className={i > 0 ? 'border-t border-line' : ''}>
-                      <td className="px-4 py-2.5 text-[12px] font-medium text-ink-2">{view.label}</td>
+                      <td className="px-4 py-2.5">
+                        <div className="text-[12px] font-medium text-ink-2">{view.label}</div>
+                        {activeRound && (
+                          <div className="text-[10px] text-ink-3">{roundLabel(activeRound.round_number)}</div>
+                        )}
+                      </td>
                       {STAGE_ORDER.map(stage => {
-                        const state = gridStageStates?.find(
+                        const state = (stageStates ?? []).find(
                           s => s.project_view_id === view.id && s.stage === stage
                         )
                         return (
@@ -191,13 +166,11 @@ export default async function ProjectDetailPage({ params, searchParams }: Props)
                         )
                       })}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="text-[13px] text-ink-3 py-4">No round data.</div>
-          )}
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

@@ -40,20 +40,28 @@ export async function createProject(input: CreateProjectInput) {
 
   if (viewError || !views) return { error: viewError?.message ?? 'Failed to create views' }
 
-  const { data: round, error: roundError } = await supabase
-    .from('delivery_rounds')
-    .insert({ project_id: project.id, round_number: 0, status: 'active' })
+  // Create one project_view_round per view (round 0, active)
+  const roundInserts = views.map(view => ({
+    project_id: project.id,
+    project_view_id: view.id,
+    round_number: 0,
+    status: 'active' as const,
+  }))
+
+  const { data: rounds, error: roundError } = await supabase
+    .from('project_view_rounds')
+    .insert(roundInserts)
     .select()
-    .single()
 
-  if (roundError || !round) return { error: roundError?.message ?? 'Failed to create round' }
+  if (roundError || !rounds) return { error: roundError?.message ?? 'Failed to create view rounds' }
 
-  const stateInserts = views.flatMap(view =>
+  // Create stage states for each view's round
+  const stateInserts = rounds.flatMap(round =>
     STAGE_ORDER.map(stage => ({
       project_id: project.id,
-      delivery_round_id: round.id,
-      project_view_id: view.id,
-      stage,
+      project_view_round_id: round.id,
+      project_view_id: round.project_view_id,
+      stage: stage as StageType,
       status: 'not_started' as const,
     }))
   )
@@ -205,60 +213,87 @@ export async function updateProjectViewCount(projectId: string, newViewCount: nu
 
   if (newViewCount >= oldCount) {
     // Activate or create views up to newViewCount
+    const upsertedViews: { id: string }[] = []
+
     for (let n = 1; n <= newViewCount; n++) {
       const existing = viewsMap.get(n)
       if (existing) {
         if (!existing.active) {
           await supabase.from('project_views').update({ active: true }).eq('id', existing.id)
         }
+        upsertedViews.push({ id: existing.id })
       } else {
-        await supabase.from('project_views').insert({
-          project_id: projectId,
-          number: n,
-          label: viewLabel(n),
-          active: true,
-        })
+        const { data: newView } = await supabase
+          .from('project_views')
+          .insert({
+            project_id: projectId,
+            number: n,
+            label: viewLabel(n),
+            active: true,
+          })
+          .select('id')
+          .single()
+        if (newView) upsertedViews.push(newView)
       }
     }
 
-    // Ensure stage states exist for all active views across all rounds
-    const { data: rounds } = await supabase
-      .from('delivery_rounds')
-      .select('id')
-      .eq('project_id', projectId)
+    // For each newly active/created view, ensure a project_view_round exists
+    for (const view of upsertedViews) {
+      // Check if an active round already exists
+      const { data: existingRound } = await supabase
+        .from('project_view_rounds')
+        .select('id')
+        .eq('project_id', projectId)
+        .eq('project_view_id', view.id)
+        .eq('status', 'active')
+        .maybeSingle()
 
-    const { data: activeViews } = await supabase
-      .from('project_views')
-      .select('id')
-      .eq('project_id', projectId)
-      .eq('active', true)
-      .lte('number', newViewCount)
+      if (!existingRound) {
+        // Find latest round to determine round_number
+        const { data: latestRound } = await supabase
+          .from('project_view_rounds')
+          .select('round_number')
+          .eq('project_id', projectId)
+          .eq('project_view_id', view.id)
+          .order('round_number', { ascending: false })
+          .limit(1)
+          .maybeSingle()
 
-    if (rounds && activeViews) {
-      for (const round of rounds) {
-        const { data: existingStates } = await supabase
-          .from('view_stage_states')
-          .select('project_view_id, stage')
-          .eq('delivery_round_id', round.id)
+        const roundNumber = latestRound ? latestRound.round_number : 0
 
-        const existingSet = new Set(
-          (existingStates ?? []).map(s => `${s.project_view_id}:${s.stage}`)
-        )
+        const { data: newRound } = await supabase
+          .from('project_view_rounds')
+          .insert({
+            project_id: projectId,
+            project_view_id: view.id,
+            round_number: roundNumber,
+            status: 'active',
+          })
+          .select('id, project_view_id')
+          .single()
 
-        const missing = activeViews.flatMap(view =>
-          STAGE_ORDER
-            .filter(stage => !existingSet.has(`${view.id}:${stage}`))
+        if (newRound) {
+          // Create missing stage states for this new round
+          const { data: existingStates } = await supabase
+            .from('view_stage_states')
+            .select('stage')
+            .eq('project_view_round_id', newRound.id)
+
+          const existingStageSet = new Set((existingStates ?? []).map(s => s.stage))
+
+          const missingStates = STAGE_ORDER
+            .filter(stage => !existingStageSet.has(stage))
             .map(stage => ({
               project_id: projectId,
-              delivery_round_id: round.id,
-              project_view_id: view.id,
+              project_view_round_id: newRound.id,
+              project_view_id: newRound.project_view_id,
               stage: stage as StageType,
               status: 'not_started' as const,
             }))
-        )
 
-        if (missing.length > 0) {
-          await supabase.from('view_stage_states').insert(missing)
+          if (missingStates.length > 0) {
+            await supabase.from('view_stage_states').insert(missingStates)
+          }
         }
       }
     }

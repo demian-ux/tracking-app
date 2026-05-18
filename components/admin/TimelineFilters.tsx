@@ -18,10 +18,11 @@ interface TimelineProject {
   current_round_number: number
   clients: { name: string } | null
   project_views: { id: string; number: number; label: string; active: boolean }[]
-  delivery_rounds: {
+  project_view_rounds: {
     id: string
     round_number: number
     status: string
+    project_view_id: string
     view_stage_states: {
       id: string
       project_view_id: string
@@ -40,12 +41,10 @@ interface Props {
 
 const STATUS_OPTIONS = [
   { value: '', label: 'All statuses' },
-  { value: 'waiting_for_info', label: 'Waiting for info' },
-  { value: 'ready_to_start', label: 'Ready to start' },
-  { value: 'in_production', label: 'In production' },
-  { value: 'ready_to_deliver', label: 'Ready to deliver' },
+  { value: 'active', label: 'Active' },
   { value: 'waiting_for_feedback', label: 'Waiting for feedback' },
-  { value: 'revision_in_progress', label: 'Revision in progress' },
+  { value: 'delivered', label: 'Delivered' },
+  { value: 'revision', label: 'Revision' },
 ]
 
 function getThisWeekEnd() {
@@ -69,7 +68,7 @@ export function TimelineFilters({ projects, clients }: Props) {
   // Collect all round numbers across projects
   const allRounds = useMemo(() => {
     const nums = new Set<number>()
-    projects.forEach(p => p.delivery_rounds.forEach(r => nums.add(r.round_number)))
+    projects.forEach(p => p.project_view_rounds.forEach(r => nums.add(r.round_number)))
     return Array.from(nums).sort((a, b) => a - b)
   }, [projects])
 
@@ -84,7 +83,7 @@ export function TimelineFilters({ projects, clients }: Props) {
       if (statusFilter && p.status !== statusFilter) return false
       if (roundFilter !== '') {
         const rn = parseInt(roundFilter)
-        const hasRound = p.delivery_rounds.some(r => r.round_number === rn && r.status === 'active')
+        const hasRound = p.project_view_rounds.some(r => r.round_number === rn && r.status === 'active')
         if (!hasRound) return false
       }
       return true
@@ -164,10 +163,14 @@ export function TimelineFilters({ projects, clients }: Props) {
 
       <div className="space-y-6">
         {filtered.map(project => {
-          const activeRound = project.delivery_rounds.find(r => r.status === 'active')
+          const activeRounds = project.project_view_rounds.filter(r => r.status === 'active')
           const activeViews = project.project_views.filter(v => v.active)
-          const activeStates = activeRound?.view_stage_states ?? []
+          const activeStates = activeRounds.flatMap(r => r.view_stage_states ?? [])
           const progress = calculateProgress(activeStates)
+          const maxActiveRoundNumber = activeRounds.length > 0
+            ? Math.max(...activeRounds.map(r => r.round_number))
+            : null
+          const deliveredRounds = project.project_view_rounds.filter(r => r.status === 'delivered')
 
           return (
             <div key={project.id} className="bg-surface border border-line rounded-md overflow-hidden">
@@ -188,7 +191,7 @@ export function TimelineFilters({ projects, clients }: Props) {
                   <div className="flex items-center gap-2 mt-1">
                     <ProjectBadge status={project.status} />
                     <span className="text-[11px] text-ink-3">
-                      {activeRound ? roundLabel(activeRound.round_number) : '—'}
+                      {maxActiveRoundNumber !== null ? roundLabel(maxActiveRoundNumber) : '—'}
                     </span>
                     <span className="text-ink-3 text-[11px]">·</span>
                     <span className="text-[11px] text-ink-3">
@@ -202,7 +205,7 @@ export function TimelineFilters({ projects, clients }: Props) {
               </div>
 
               {/* View-stage grid */}
-              {activeRound && activeViews.length > 0 && (
+              {activeRounds.length > 0 && activeViews.length > 0 && (
                 <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead>
@@ -216,50 +219,51 @@ export function TimelineFilters({ projects, clients }: Props) {
                       </tr>
                     </thead>
                     <tbody>
-                      {activeViews.map((view, i) => (
-                        <tr key={view.id} className={i > 0 ? 'border-t border-line' : ''}>
-                          <td className="px-4 py-2.5 text-[11px] font-medium text-ink-2">{view.label}</td>
-                          {STAGE_ORDER.map(stage => {
-                            const state = activeStates.find(
-                              s => s.project_view_id === view.id && s.stage === stage
-                            )
-                            return (
-                              <td key={stage} className="px-4 py-2.5">
-                                {state ? (
-                                  <div>
-                                    <StageBadge status={state.status} />
-                                    {state.latest_eta_date && (
-                                      <div className="text-[10px] text-ink-3 mt-0.5">
-                                        {formatDelivery(state.latest_eta_date, state.latest_eta_time_window)}
-                                      </div>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <span className="text-[11px] text-ink-3">—</span>
-                                )}
-                              </td>
-                            )
-                          })}
-                        </tr>
-                      ))}
+                      {activeViews.map((view, i) => {
+                        // Find active round states for this view
+                        const viewActiveRound = activeRounds.find(r => r.project_view_id === view.id)
+                        const viewStates = viewActiveRound?.view_stage_states ?? []
+                        return (
+                          <tr key={view.id} className={i > 0 ? 'border-t border-line' : ''}>
+                            <td className="px-4 py-2.5 text-[11px] font-medium text-ink-2">{view.label}</td>
+                            {STAGE_ORDER.map(stage => {
+                              const state = viewStates.find(
+                                s => s.project_view_id === view.id && s.stage === stage
+                              )
+                              return (
+                                <td key={stage} className="px-4 py-2.5">
+                                  {state ? (
+                                    <div>
+                                      <StageBadge status={state.status} />
+                                      {state.latest_eta_date && (
+                                        <div className="text-[10px] text-ink-3 mt-0.5">
+                                          {formatDelivery(state.latest_eta_date, state.latest_eta_time_window)}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <span className="text-[11px] text-ink-3">—</span>
+                                  )}
+                                </td>
+                              )
+                            })}
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
               )}
 
-              {/* Round history pills */}
-              {project.delivery_rounds.length > 1 && (
-                <div className="px-5 py-2.5 border-t border-line flex gap-2">
-                  {project.delivery_rounds.map(round => (
+              {/* Round history pills — show delivered view rounds */}
+              {deliveredRounds.length > 0 && (
+                <div className="px-5 py-2.5 border-t border-line flex gap-2 flex-wrap">
+                  {Array.from(new Set(deliveredRounds.map(r => r.round_number))).sort().map(rn => (
                     <span
-                      key={round.id}
-                      className={`text-[10px] px-2 py-0.5 rounded-full ${
-                        round.status === 'delivered'
-                          ? 'bg-done-bg text-done-text'
-                          : 'bg-progress-bg text-progress-text'
-                      }`}
+                      key={rn}
+                      className="text-[10px] px-2 py-0.5 rounded-full bg-done-bg text-done-text"
                     >
-                      {roundLabel(round.round_number)}{round.status === 'delivered' ? ' ✓' : ''}
+                      {roundLabel(rn)} ✓
                     </span>
                   ))}
                 </div>

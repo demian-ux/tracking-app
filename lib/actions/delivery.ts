@@ -11,15 +11,32 @@ export interface IncompleteItem {
   status: string
 }
 
-export async function markDeliverySent(projectId: string, roundId: string) {
+export async function markDeliverySent(projectId: string, viewIds: string[]) {
   const auth = await requireAdmin()
   if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
   const { user, supabase } = auth.data
 
+  if (!viewIds || viewIds.length === 0) return { error: 'No views selected' }
+
+  // Find active rounds for selected views
+  const { data: activeRounds } = await supabase
+    .from('project_view_rounds')
+    .select('id, project_view_id')
+    .eq('project_id', projectId)
+    .eq('status', 'active')
+    .in('project_view_id', viewIds)
+
+  if (!activeRounds || activeRounds.length === 0) {
+    return { error: 'No active rounds found for selected views' }
+  }
+
+  const roundIds = activeRounds.map(r => r.id)
+
+  // Check all stages are done
   const { data: states } = await supabase
     .from('view_stage_states')
     .select('id, status, stage, project_view_id, project_views ( label )')
-    .eq('delivery_round_id', roundId)
+    .in('project_view_round_id', roundIds)
 
   if (!states) return { error: 'Could not fetch stage states' }
 
@@ -38,13 +55,15 @@ export async function markDeliverySent(projectId: string, roundId: string) {
     }
   }
 
+  // Mark selected rounds as delivered
   const { error: roundErr } = await supabase
-    .from('delivery_rounds')
+    .from('project_view_rounds')
     .update({ status: 'delivered', delivered_at: new Date().toISOString() })
-    .eq('id', roundId)
+    .in('id', roundIds)
 
   if (roundErr) return { error: roundErr.message }
 
+  // Increment delivery_count and set project status
   const { data: project } = await supabase
     .from('projects')
     .select('delivery_count')
@@ -65,21 +84,23 @@ export async function markDeliverySent(projectId: string, roundId: string) {
     project_id: projectId,
     actor_id: user.id,
     event_type: 'delivery_marked_sent',
-    payload: { round_id: roundId },
+    payload: { view_ids: viewIds },
   })
 
   revalidateProjectScreens(projectId)
   return { data: true }
 }
 
-export async function createRevisionRound(projectId: string) {
+export async function createRevisionRound(projectId: string, viewIds: string[]) {
   const auth = await requireAdmin()
   if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
   const { user, supabase } = auth.data
 
+  if (!viewIds || viewIds.length === 0) return { error: 'No views selected' }
+
   const { data: project } = await supabase
     .from('projects')
-    .select('id, status, current_round_number')
+    .select('id, status')
     .eq('id', projectId)
     .single()
 
@@ -88,48 +109,73 @@ export async function createRevisionRound(projectId: string) {
     return { error: 'Project is not waiting for feedback or delivered' }
   }
 
-  await supabase
-    .from('delivery_rounds')
-    .update({ status: 'revision_requested' })
+  // For each selected view, find its latest round and create a new one
+  const { data: latestRounds } = await supabase
+    .from('project_view_rounds')
+    .select('*')
     .eq('project_id', projectId)
-    .eq('status', 'active')
+    .in('project_view_id', viewIds)
+    .order('round_number', { ascending: false })
 
-  const newRoundNumber = project.current_round_number + 1
+  const newRoundNumbers: Record<string, number> = {}
+  const viewsProcessed = new Set<string>()
 
-  const { data: newRound, error: roundErr } = await supabase
-    .from('delivery_rounds')
-    .insert({
-      project_id: projectId,
-      round_number: newRoundNumber,
-      status: 'active',
-    })
+  for (const round of latestRounds ?? []) {
+    if (!viewsProcessed.has(round.project_view_id)) {
+      newRoundNumbers[round.project_view_id] = round.round_number + 1
+      viewsProcessed.add(round.project_view_id)
+    }
+  }
+
+  // Default to round 1 for views with no existing round
+  for (const viewId of viewIds) {
+    if (!newRoundNumbers[viewId]) {
+      newRoundNumbers[viewId] = 1
+    }
+  }
+
+  // Create new rounds for selected views
+  const roundInserts = viewIds.map(viewId => ({
+    project_id: projectId,
+    project_view_id: viewId,
+    round_number: newRoundNumbers[viewId],
+    status: 'active' as const,
+  }))
+
+  const { data: newRounds, error: roundErr } = await supabase
+    .from('project_view_rounds')
+    .insert(roundInserts)
     .select()
-    .single()
 
-  if (roundErr || !newRound) return { error: roundErr?.message ?? 'Failed to create revision round' }
+  if (roundErr || !newRounds) return { error: roundErr?.message ?? 'Failed to create revision rounds' }
 
-  const { data: activeViews } = await supabase
-    .from('project_views')
-    .select('id')
-    .eq('project_id', projectId)
-    .eq('active', true)
+  // Create stage states for new rounds
+  const stateInserts = newRounds.flatMap(round =>
+    STAGE_ORDER.map(stage => ({
+      project_id: projectId,
+      project_view_round_id: round.id,
+      project_view_id: round.project_view_id,
+      stage: stage as StageType,
+      status: 'not_started' as const,
+    }))
+  )
 
-  if (activeViews && activeViews.length > 0) {
-    const stateInserts = activeViews.flatMap(view =>
-      STAGE_ORDER.map(stage => ({
-        project_id: projectId,
-        delivery_round_id: newRound.id,
-        project_view_id: view.id,
-        stage: stage as StageType,
-        status: 'not_started' as const,
-      }))
-    )
-    await supabase.from('view_stage_states').insert(stateInserts)
+  if (stateInserts.length > 0) {
+    const { error: statesErr } = await supabase.from('view_stage_states').insert(stateInserts)
+    if (statesErr) return { error: statesErr.message }
+  }
+
+  // Update current_round_number on each affected view
+  for (const viewId of viewIds) {
+    await supabase
+      .from('project_views')
+      .update({ current_round_number: newRoundNumbers[viewId] })
+      .eq('id', viewId)
   }
 
   const { error: projectErr } = await supabase
     .from('projects')
-    .update({ current_round_number: newRoundNumber, status: 'revision' })
+    .update({ status: 'revision' })
     .eq('id', projectId)
 
   if (projectErr) return { error: projectErr.message }
@@ -138,9 +184,9 @@ export async function createRevisionRound(projectId: string) {
     project_id: projectId,
     actor_id: user.id,
     event_type: 'revision_round_created',
-    payload: { round_number: newRoundNumber },
+    payload: { view_ids: viewIds },
   })
 
   revalidateProjectScreens(projectId)
-  return { data: { round_id: newRound.id, round_number: newRoundNumber } }
+  return { data: { view_ids: viewIds } }
 }

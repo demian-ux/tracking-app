@@ -16,7 +16,7 @@ interface ProjectListRow {
   current_round_number: number
   view_count: number
   clients: { name: string } | null
-  delivery_rounds: {
+  project_view_rounds: {
     id: string
     status: string
     view_stage_states: { status: StageStatus }[]
@@ -32,7 +32,7 @@ export default async function ProjectsPage() {
       id, name, status, delivery_date, delivery_time_window,
       current_round_number, view_count,
       clients ( name ),
-      delivery_rounds (
+      project_view_rounds (
         id, status,
         view_stage_states ( status )
       )
@@ -69,8 +69,9 @@ export default async function ProjectsPage() {
 
       <div className="space-y-1.5">
         {projectRows.map(project => {
-          const activeRound = project.delivery_rounds?.find(r => r.status === 'active')
-          const activeStates = activeRound?.view_stage_states ?? []
+          const activeStates = project.project_view_rounds
+            ?.filter(r => r.status === 'active')
+            .flatMap(r => r.view_stage_states ?? []) ?? []
           const progress = calculateProgress(activeStates)
 
           return (

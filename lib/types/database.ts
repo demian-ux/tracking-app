@@ -152,6 +152,7 @@ export interface Database {
           number: number
           label: string
           active: boolean
+          current_round_number: number
           created_at: string
         }
         Insert: {
@@ -160,38 +161,36 @@ export interface Database {
           number: number
           label: string
           active?: boolean
+          current_round_number?: number
           created_at?: string
         }
         Update: {
           label?: string
           active?: boolean
+          current_round_number?: number
         }
       }
-      delivery_rounds: {
+      project_view_rounds: {
         Row: {
           id: string
           project_id: string
+          project_view_id: string
           round_number: number
           status: RoundStatus
-          started_at: string | null
-          completed_at: string | null
           delivered_at: string | null
           created_at: string
         }
         Insert: {
           id?: string
           project_id: string
-          round_number: number
+          project_view_id: string
+          round_number?: number
           status?: RoundStatus
-          started_at?: string | null
-          completed_at?: string | null
           delivered_at?: string | null
           created_at?: string
         }
         Update: {
           status?: RoundStatus
-          started_at?: string | null
-          completed_at?: string | null
           delivered_at?: string | null
         }
       }
@@ -199,7 +198,7 @@ export interface Database {
         Row: {
           id: string
           project_id: string
-          delivery_round_id: string
+          project_view_round_id: string
           project_view_id: string
           stage: StageType
           status: StageStatus
@@ -215,7 +214,7 @@ export interface Database {
         Insert: {
           id?: string
           project_id: string
-          delivery_round_id: string
+          project_view_round_id: string
           project_view_id: string
           stage: StageType
           status?: StageStatus
@@ -244,7 +243,7 @@ export interface Database {
         Row: {
           id: string
           project_id: string
-          delivery_round_id: string
+          project_view_round_id: string
           project_view_id: string
           stage: StageType
           event_type: StageEventType
@@ -256,7 +255,7 @@ export interface Database {
         Insert: {
           id?: string
           project_id: string
-          delivery_round_id: string
+          project_view_round_id: string
           project_view_id: string
           stage: StageType
           event_type: StageEventType

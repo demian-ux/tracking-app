@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useTransition } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { startStage, finishStage, blockStage, ensureProjectWorkflow } from '@/lib/actions/stages'
 import type { StageType, TimeWindow } from '@/lib/types/database'
-import { STAGE_LABELS, STAGE_ORDER, TIME_WINDOWS, BLOCK_REASONS, roundLabel } from '@/lib/types/app'
+import { STAGE_LABELS, STAGE_ORDER, TIME_WINDOWS, BLOCK_REASONS } from '@/lib/types/app'
 import { formatDelivery } from '@/lib/utils/formatting'
 
 interface Project {
@@ -35,8 +35,9 @@ interface View {
   label: string
 }
 
-interface Round {
+interface ViewRound {
   id: string
+  project_view_id: string
   round_number: number
   status: string
 }
@@ -68,7 +69,7 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
   const [etaWindow, setEtaWindow] = useState<TimeWindow | ''>('')
 
   const [views, setViews] = useState<View[]>([])
-  const [round, setRound] = useState<Round | null>(null)
+  const [viewRounds, setViewRounds] = useState<ViewRound[]>([])
   const [roundLoading, setRoundLoading] = useState(false)
   const [workflowError, setWorkflowError] = useState<string | null>(null)
   const [states, setStates] = useState<ViewState[]>([])
@@ -113,15 +114,15 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
 
       if (workflow.error) {
         setWorkflowError(workflow.error)
-        setRound(null)
+        setViewRounds([])
         setStates([])
       } else if (workflow.data) {
         setWorkflowError(null)
-        setRound(workflow.data.round as Round)
+        setViewRounds(workflow.data.rounds as ViewRound[])
         setStates((workflow.data.states ?? []) as ViewState[])
       } else {
         setWorkflowError('Workflow returned no data.')
-        setRound(null)
+        setViewRounds([])
         setStates([])
       }
     }
@@ -131,11 +132,12 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
   }, [projectId, supabase])
 
   async function reloadStates() {
-    if (!round) return
+    if (viewRounds.length === 0) return
+    const roundIds = viewRounds.map(r => r.id)
     const { data } = await supabase
       .from('view_stage_states')
       .select('*')
-      .eq('delivery_round_id', round.id)
+      .in('project_view_round_id', roundIds)
     setStates((data ?? []) as ViewState[])
   }
 
@@ -207,7 +209,7 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
 
   const canStart =
     !isPending &&
-    !!round &&
+    viewRounds.length > 0 &&
     !roundLoading &&
     !!stage &&
     allSelectedHaveState &&
@@ -216,7 +218,7 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
 
   const canFinish =
     !isPending &&
-    !!round &&
+    viewRounds.length > 0 &&
     !roundLoading &&
     !!stage &&
     allSelectedHaveState &&
@@ -226,7 +228,7 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
 
   const canBlock =
     !isPending &&
-    !!round &&
+    viewRounds.length > 0 &&
     !roundLoading &&
     !!stage &&
     allSelectedHaveState &&
@@ -240,7 +242,7 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
     if (!projectId) return null
     if (roundLoading) return 'Loading workflow…'
     if (workflowError) return workflowError
-    if (!round) return 'Could not load active round'
+    if (viewRounds.length === 0) return 'Could not load active rounds'
     if (!stage) return null
     if (selectedViewIds.length === 0) return null
     if (stageOrderBlock) return stageOrderBlock
@@ -252,7 +254,7 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
   })()
 
   const finishDisabledReason: string | null = (() => {
-    if (isPending || !round || roundLoading || !stage || selectedViewIds.length === 0) return null
+    if (isPending || viewRounds.length === 0 || roundLoading || !stage || selectedViewIds.length === 0) return null
     if (!allSelectedHaveState) return 'Stage data still loading'
     if (selectedStates.some(s => s.status !== 'in_progress')) return 'Start this stage first'
     if (selectedStates.some(s => s.assigned_user_id !== userId)) return 'Assigned to someone else'
@@ -266,12 +268,11 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
   // ── Handlers ────────────────────────────────────────────────────────────────
 
   function handleStart() {
-    if (!canStart || !round) return
+    if (!canStart) return
     setFeedback(null)
     startTransition(async () => {
       const result = await startStage({
         projectId,
-        roundId: round.id,
         viewIds: selectedViewIds,
         stage: stage as StageType,
         etaDate: etaDate || null,
@@ -291,12 +292,11 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
   }
 
   function handleFinish() {
-    if (!canFinish || !round) return
+    if (!canFinish) return
     setFeedback(null)
     startTransition(async () => {
       const result = await finishStage({
         projectId,
-        roundId: round.id,
         viewIds: selectedViewIds,
         stage: stage as StageType,
       })
@@ -311,11 +311,11 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
   }
 
   function handleBlock() {
-    if (!canBlock || !round || !blockReason) return
+    if (!canBlock || !blockReason) return
     setFeedback(null)
     startTransition(async () => {
       const result = await blockStage(
-        projectId, round.id, selectedViewIds, stage as StageType, blockReason,
+        projectId, selectedViewIds, stage as StageType, blockReason,
       )
       if (result.error) {
         setFeedback({ ok: false, msg: result.error })
@@ -353,7 +353,7 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
             setEtaWindow('')
             setFeedback(null)
             setWorkflowError(null)
-            setRound(null)
+            setViewRounds([])
             setStates([])
             setViews([])
             setRoundLoading(!!next)
@@ -375,12 +375,10 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
       )}
 
       {/* Project info strip */}
-      {project && round && (
+      {project && viewRounds.length > 0 && (
         <div className="space-y-2">
           <div className="flex items-center gap-4 text-[11px] text-ink-2">
             <span>{formatDelivery(project.delivery_date, project.delivery_time_window)}</span>
-            <span className="text-ink-3">·</span>
-            <span>{roundLabel(round.round_number)}</span>
             <span className="text-ink-3">·</span>
             <span>{project.view_count} views</span>
           </div>
@@ -608,7 +606,7 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
       {process.env.NODE_ENV === 'development' && (
         <div className="mt-4 p-3 bg-surface border border-line rounded-md font-mono text-[10px] text-ink-3 space-y-0.5">
           <div>project: {projectId || '—'}</div>
-          <div>round:   {round?.id ?? (roundLoading ? 'loading…' : '—')}</div>
+          <div>rounds: {viewRounds.length > 0 ? viewRounds.length : (roundLoading ? 'loading…' : '—')}</div>
           <div>stage:   {stage || '—'}</div>
           <div>views:   {selectedViewIds.length ? selectedViewIds.map(id => views.find(v => v.id === id)?.label ?? id).join(', ') : '—'}</div>
           <div>canStart: {String(canStart)} · canFinish: {String(canFinish)} · canBlock: {String(canBlock)}</div>

@@ -12,8 +12,8 @@ export default async function TimelinePage() {
         current_round_number,
         clients ( name ),
         project_views ( id, number, label, active ),
-        delivery_rounds (
-          id, round_number, status,
+        project_view_rounds (
+          id, round_number, status, project_view_id,
           view_stage_states (
             id, project_view_id, stage, status,
             latest_eta_date, latest_eta_time_window
