@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { ensureUserProfile } from '@/lib/utils/ensure-profile'
+import { ViewSwitcher } from '@/components/ui/ViewSwitcher'
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient()
@@ -51,9 +52,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             </nav>
           </div>
           <div className="flex items-center gap-4">
-            <Link href="/app/widget" className="text-[11px] text-ink-3 hover:text-ink-2 transition-colors tracking-wide">
-              Widget -&gt;
-            </Link>
+            <ViewSwitcher active="admin" />
             <span className="text-[12px] text-ink-2">{profile.name}</span>
           </div>
         </div>

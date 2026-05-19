@@ -1,8 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
-import Link from 'next/link'
 import { WidgetClient } from '@/components/widget/WidgetClient'
 import { ensureUserProfile } from '@/lib/utils/ensure-profile'
+import { ViewSwitcher } from '@/components/ui/ViewSwitcher'
 
 export default async function WidgetPage() {
   const supabase = await createClient()
@@ -39,14 +39,7 @@ export default async function WidgetPage() {
           <span className="text-[11px] tracking-[0.15em] uppercase text-ink-3">Oaki Studio</span>
           <div className="flex items-center gap-4">
             <span className="text-[12px] text-ink-2">{currentUser?.name ?? user.email}</span>
-            {currentUser?.role === 'admin' && (
-              <Link
-                href="/admin/projects"
-                className="text-[11px] text-ink-3 hover:text-ink-2 transition-colors tracking-wide"
-              >
-                Admin -&gt;
-              </Link>
-            )}
+            {currentUser?.role === 'admin' && <ViewSwitcher active="widget" />}
           </div>
         </div>
       </header>

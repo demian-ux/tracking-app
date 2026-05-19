@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useTransition } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { startStage, finishStage, blockStage, ensureProjectWorkflow } from '@/lib/actions/stages'
+import { startStage, finishStage, blockStage, ensureProjectWorkflow, undoStageAction } from '@/lib/actions/stages'
 import type { StageType, TimeWindow } from '@/lib/types/database'
 import { STAGE_LABELS, STAGE_ORDER, TIME_WINDOWS, BLOCK_REASONS } from '@/lib/types/app'
 import { formatDelivery } from '@/lib/utils/formatting'
@@ -57,6 +57,12 @@ interface WidgetClientProps {
 
 type ViewFilter = 'all' | 'mine' | 'available' | 'blocked' | 'done'
 
+interface UndoState {
+  msg: string
+  restores: { id: string; status: string; assigned_user_id: string | null }[]
+  timerId: ReturnType<typeof setTimeout>
+}
+
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <div className="text-[10px] tracking-[0.18em] uppercase text-ink-3 mb-2.5 flex items-center gap-2">
@@ -91,6 +97,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
 
   const [showBlockPanel, setShowBlockPanel] = useState(false)
   const [blockReason, setBlockReason] = useState('')
+  const [undoState, setUndoState] = useState<UndoState | null>(null)
 
   const project = projects.find(p => p.id === projectId) ?? null
   const usersById = useMemo(() => Object.fromEntries(users.map(u => [u.id, u])), [users])
@@ -295,9 +302,19 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
     : 0
 
   // ── Handlers ────────────────────────────────────────────────────────────────
+  function armUndo(msg: string, restores: UndoState['restores']) {
+    if (undoState) clearTimeout(undoState.timerId)
+    const timerId = setTimeout(() => setUndoState(null), 12000)
+    setUndoState({ msg, restores, timerId })
+  }
+
   function handleStart() {
     if (!canStart) return
     setFeedback(null)
+    const snapshot = selectedStates.map(s => ({
+      id: s.id, status: s.status, assigned_user_id: s.assigned_user_id,
+    }))
+    const count = selectedViewIds.length
     startTransition(async () => {
       const result = await startStage({
         projectId,
@@ -312,9 +329,9 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
       } else if (result.error) {
         setFeedback({ ok: false, msg: result.error })
       } else {
-        setFeedback({ ok: true, msg: `Started ${selectedViewIds.length} view${selectedViewIds.length > 1 ? 's' : ''}.` })
         clearSelection()
         await reloadStates()
+        armUndo(`Started ${count} view${count > 1 ? 's' : ''}`, snapshot)
       }
     })
   }
@@ -322,6 +339,10 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
   function handleFinish() {
     if (!canFinish) return
     setFeedback(null)
+    const snapshot = selectedStates.map(s => ({
+      id: s.id, status: s.status, assigned_user_id: s.assigned_user_id,
+    }))
+    const count = selectedViewIds.length
     startTransition(async () => {
       const result = await finishStage({
         projectId,
@@ -331,11 +352,20 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
       if (result.error) {
         setFeedback({ ok: false, msg: result.error })
       } else {
-        setFeedback({ ok: true, msg: `Marked ${selectedViewIds.length} view${selectedViewIds.length > 1 ? 's' : ''} done.` })
         clearSelection()
         await reloadStates()
+        armUndo(`Marked ${count} view${count > 1 ? 's' : ''} done`, snapshot)
       }
     })
+  }
+
+  async function handleUndo() {
+    if (!undoState) return
+    clearTimeout(undoState.timerId)
+    setUndoState(null)
+    const result = await undoStageAction(projectId, undoState.restores)
+    if (result.error) setFeedback({ ok: false, msg: result.error })
+    await reloadStates()
   }
 
   function handleBlock() {
@@ -447,10 +477,30 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
       {/* Views */}
       {stage && views.length > 0 && (
         <div>
+          {/* Views header: label + select all + filters */}
           <div className="flex items-center justify-between mb-2.5">
-            <div className="text-[10px] tracking-[0.18em] uppercase text-ink-3 flex items-center gap-2">
-              <span>Views</span>
-              <span className="flex-1 border-t border-line w-4" />
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] tracking-[0.18em] uppercase text-ink-3">Views</span>
+              {(() => {
+                const eligible = filteredViews.filter(v => !prereqBlockedForView(v.id))
+                const allSelected = eligible.length > 0 && eligible.every(v => selectedViewIds.includes(v.id))
+                return eligible.length > 0 ? (
+                  <button
+                    onClick={() => {
+                      if (allSelected) {
+                        setSelectedViewIds([])
+                      } else {
+                        setSelectedViewIds(eligible.map(v => v.id))
+                        setConflictViewIds([])
+                        setFeedback(null)
+                      }
+                    }}
+                    className="text-[10px] text-ink-3 hover:text-ink-2 transition-colors"
+                  >
+                    {allSelected ? 'Clear' : 'Select all'}
+                  </button>
+                ) : null
+              })()}
             </div>
             {/* Quick filters */}
             <div className="flex gap-1">
@@ -581,6 +631,27 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
           <div>views:   {selectedViewIds.length ? selectedViewIds.map(id => views.find(v => v.id === id)?.label ?? id).join(', ') : '—'}</div>
           <div>canStart: {String(canStart)} · canFinish: {String(canFinish)} · canBlock: {String(canBlock)}</div>
           {workflowError && <div className="text-blocked-text">workflow error: {workflowError}</div>}
+        </div>
+      )}
+
+      {/* Undo toast */}
+      {undoState && (
+        <div className="fixed top-4 left-0 right-0 z-50 flex justify-center pointer-events-none">
+          <div className="flex items-center gap-3 bg-elevated border border-line-strong rounded-lg px-4 py-2.5 shadow-xl pointer-events-auto">
+            <span className="text-[12px] text-ink">{undoState.msg}</span>
+            <button
+              onClick={handleUndo}
+              className="text-[12px] text-accent font-medium hover:text-accent-dim transition-colors"
+            >
+              Undo
+            </button>
+            <button
+              onClick={() => { clearTimeout(undoState.timerId); setUndoState(null) }}
+              className="text-[11px] text-ink-3 hover:text-ink-2 transition-colors"
+            >
+              ✕
+            </button>
+          </div>
         </div>
       )}
 

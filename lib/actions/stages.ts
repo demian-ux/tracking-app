@@ -1,10 +1,10 @@
-'use server'
+﻿'use server'
 
 import { revalidateProjectScreens } from '@/lib/utils/revalidate'
 import { requireWorker, requireAdmin } from '@/lib/actions/auth'
 import type { StartStageInput, FinishStageInput, ProjectViewRound } from '@/lib/types/app'
 import { STAGE_ORDER, STAGE_LABELS } from '@/lib/types/app'
-import type { StageType } from '@/lib/types/database'
+import type { StageType, StageStatus } from '@/lib/types/database'
 
 export async function ensureProjectWorkflow(projectId: string) {
   const auth = await requireWorker()
@@ -134,7 +134,7 @@ export async function startStage(input: StartStageInput) {
 
   const roundIds = activeRounds.map(r => r.id)
 
-  // Sequential stage enforcement — team members cannot skip stages
+  // Sequential stage enforcement â€” team members cannot skip stages
   if (profile.role !== 'admin') {
     const idx = STAGE_ORDER.indexOf(input.stage)
     if (idx > 0) {
@@ -454,6 +454,35 @@ export async function reopenStage(
     event_type: 'stage_reopened' as const,
     actor_id: user.id,
   })
+
+  revalidateProjectScreens(projectId)
+  return { data: true }
+}
+
+export async function undoStageAction(
+  projectId: string,
+  restores: { id: string; status: string; assigned_user_id: string | null }[],
+) {
+  const auth = await requireWorker()
+  if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
+  const { supabase } = auth.data
+
+  for (const r of restores) {
+    const update: Record<string, unknown> = {
+      status: r.status as StageStatus,
+      assigned_user_id: r.assigned_user_id,
+    }
+    if (r.status === 'not_started' || r.status === 'reopened') {
+      update.started_at = null
+      update.latest_eta_date = null
+      update.latest_eta_time_window = null
+    }
+    if (r.status !== 'done') {
+      update.completed_at = null
+    }
+    const { error } = await supabase.from('view_stage_states').update(update).eq('id', r.id)
+    if (error) return { error: error.message }
+  }
 
   revalidateProjectScreens(projectId)
   return { data: true }
