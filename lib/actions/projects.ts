@@ -136,10 +136,14 @@ export async function archiveProject(projectId: string) {
   return { data: true }
 }
 
-export async function deleteProjectPermanently(projectId: string) {
+export async function deleteProjectPermanently(projectId: string, confirmation: string) {
   const auth = await requireAdmin()
   if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
-  const { supabase } = auth.data
+  const { user, supabase } = auth.data
+
+  if (confirmation !== 'DELETE PROJECT') {
+    return { error: 'Type DELETE PROJECT to confirm permanent deletion.' }
+  }
 
   const { data: project } = await supabase
     .from('projects')
@@ -149,12 +153,27 @@ export async function deleteProjectPermanently(projectId: string) {
 
   if (!project) return { error: 'Project not found' }
 
-  const { error } = await supabase
-    .from('projects')
-    .delete()
-    .eq('id', projectId)
+  await supabase.from('project_events').insert({
+    project_id: projectId,
+    actor_id: user.id,
+    event_type: 'project_archived',
+    payload: { action: 'delete_permanently_requested', project_name: project.name },
+  })
 
-  if (error) return { error: error.message }
+  const deleteSteps = [
+    supabase.from('stage_events').delete().eq('project_id', projectId),
+    supabase.from('project_events').delete().eq('project_id', projectId),
+    supabase.from('view_stage_states').delete().eq('project_id', projectId),
+    supabase.from('project_view_rounds').delete().eq('project_id', projectId),
+    supabase.from('project_views').delete().eq('project_id', projectId),
+    supabase.from('projects').delete().eq('id', projectId),
+  ]
+
+  for (const step of deleteSteps) {
+    const { error } = await step
+    if (error) return { error: error.message }
+  }
+
 
   revalidateProjectScreens(projectId)
   return { data: { deletedName: project.name } }

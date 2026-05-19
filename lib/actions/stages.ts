@@ -180,7 +180,7 @@ export async function startStage(input: StartStageInput) {
 
   const stateIds = currentStates.map(s => s.id)
 
-  const { error: updateErr } = await supabase
+  const { data: updatedStates, error: updateErr } = await supabase
     .from('view_stage_states')
     .update({
       status: 'in_progress',
@@ -190,6 +190,7 @@ export async function startStage(input: StartStageInput) {
       latest_eta_time_window: input.etaTimeWindow ?? null,
     })
     .in('id', stateIds)
+    .select('id, project_view_id, project_view_round_id, stage, status, assigned_user_id, started_at, completed_at, latest_eta_date, latest_eta_time_window')
 
   if (updateErr) return { error: updateErr.message }
 
@@ -207,7 +208,7 @@ export async function startStage(input: StartStageInput) {
   )
 
   revalidateProjectScreens(input.projectId)
-  return { data: true }
+  return { data: { updatedStates: updatedStates ?? [] } }
 }
 
 export async function finishStage(input: FinishStageInput) {
@@ -249,7 +250,7 @@ export async function finishStage(input: FinishStageInput) {
 
   const stateIds = currentStates.map(s => s.id)
 
-  const { error: updateErr } = await supabase
+  const { data: updatedStates, error: updateErr } = await supabase
     .from('view_stage_states')
     .update({
       status: 'done',
@@ -259,6 +260,7 @@ export async function finishStage(input: FinishStageInput) {
       latest_eta_time_window: null,
     })
     .in('id', stateIds)
+    .select('id, project_view_id, project_view_round_id, stage, status, assigned_user_id, started_at, completed_at, latest_eta_date, latest_eta_time_window')
 
   if (updateErr) return { error: updateErr.message }
 
@@ -274,7 +276,7 @@ export async function finishStage(input: FinishStageInput) {
   )
 
   revalidateProjectScreens(input.projectId)
-  return { data: true }
+  return { data: { updatedStates: updatedStates ?? [] } }
 }
 
 export async function blockStage(
@@ -321,7 +323,7 @@ export async function blockStage(
 
   const stateIds = currentStates.map(s => s.id)
 
-  const { error: updateErr } = await supabase
+  const { data: updatedStates, error: updateErr } = await supabase
     .from('view_stage_states')
     .update({
       status: 'blocked',
@@ -329,6 +331,7 @@ export async function blockStage(
       status_before_block: 'in_progress',
     })
     .in('id', stateIds)
+    .select('id, project_view_id, project_view_round_id, stage, status, assigned_user_id, started_at, completed_at, latest_eta_date, latest_eta_time_window, block_reason')
 
   if (updateErr) return { error: updateErr.message }
 
@@ -344,7 +347,7 @@ export async function blockStage(
   )
 
   revalidateProjectScreens(projectId)
-  return { data: true }
+  return { data: { updatedStates: updatedStates ?? [] } }
 }
 
 export async function unblockStage(
@@ -467,7 +470,7 @@ export async function undoStageAction(
   if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
   const { supabase } = auth.data
 
-  for (const r of restores) {
+  const results = await Promise.all(restores.map(r => {
     const update: Record<string, unknown> = {
       status: r.status as StageStatus,
       assigned_user_id: r.assigned_user_id,
@@ -480,9 +483,11 @@ export async function undoStageAction(
     if (r.status !== 'done') {
       update.completed_at = null
     }
-    const { error } = await supabase.from('view_stage_states').update(update).eq('id', r.id)
-    if (error) return { error: error.message }
-  }
+    return supabase.from('view_stage_states').update(update).eq('id', r.id)
+  }))
+
+  const firstError = results.find(r => r.error)
+  if (firstError?.error) return { error: firstError.error.message }
 
   revalidateProjectScreens(projectId)
   return { data: true }
@@ -540,7 +545,7 @@ export async function resetStage(
 
   const stateIds = statesToReset.map(s => s.id)
 
-  const { error: updateErr } = await supabase
+  const { data: updatedStates, error: updateErr } = await supabase
     .from('view_stage_states')
     .update({
       status: 'not_started' as StageStatus,
@@ -553,6 +558,7 @@ export async function resetStage(
       status_before_block: null,
     })
     .in('id', stateIds)
+    .select('id, project_view_id, project_view_round_id, stage, status, assigned_user_id, started_at, completed_at, latest_eta_date, latest_eta_time_window, block_reason')
 
   if (updateErr) return { error: updateErr.message }
 
@@ -568,5 +574,5 @@ export async function resetStage(
   )
 
   revalidateProjectScreens(projectId)
-  return { data: { resetCount: statesToReset.length } }
+  return { data: { updatedStates: updatedStates ?? [] } }
 }

@@ -12,12 +12,14 @@ export function ProjectCleanupActions({
   viewCount,
   afterDeleteHref,
   compact = false,
+  prominent = false,
 }: {
   projectId: string
   projectName: string
   viewCount?: number
   afterDeleteHref?: string
   compact?: boolean
+  prominent?: boolean
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
@@ -25,7 +27,7 @@ export function ProjectCleanupActions({
   const [error, setError] = useState<string | null>(null)
   const [deleteConfirmText, setDeleteConfirmText] = useState('')
 
-  const deleteReady = deleteConfirmText === 'DELETE'
+  const deleteReady = deleteConfirmText === 'DELETE PROJECT'
 
   function handleArchive() {
     setError(null)
@@ -41,7 +43,7 @@ export function ProjectCleanupActions({
     if (!deleteReady) return
     setError(null)
     startTransition(async () => {
-      const result = await deleteProjectPermanently(projectId)
+      const result = await deleteProjectPermanently(projectId, deleteConfirmText)
       if (result.error) { setError(result.error); return }
       setConfirming(null)
       if (afterDeleteHref) router.push(afterDeleteHref)
@@ -57,23 +59,31 @@ export function ProjectCleanupActions({
 
   return (
     <>
-      <div className={compact ? 'flex items-center gap-2' : 'flex flex-wrap items-center gap-2'}>
+      <div className={prominent ? 'rounded-md border border-blocked-text/25 bg-blocked-bg/20 p-4' : ''}>
+        {prominent && (
+          <div className="mb-3">
+            <p className="text-[12px] font-medium text-ink">Project actions</p>
+            <p className="text-[11px] text-ink-3 mt-0.5">Archive keeps history. Delete permanently removes this project.</p>
+          </div>
+        )}
+        <div className={compact ? 'flex items-center gap-2' : 'flex flex-wrap items-center gap-2'}>
         <button
           type="button"
           onClick={() => { setConfirming('archive'); setError(null) }}
           disabled={isPending}
-          className="px-2.5 py-1 text-[11px] text-ink-3 border border-line rounded hover:text-ink-2 hover:border-line-strong disabled:opacity-40 transition-colors"
+          className={`${prominent ? 'px-3 py-2 text-[12px]' : 'px-2.5 py-1 text-[11px]'} text-ink-2 border border-line-strong rounded hover:text-accent hover:border-accent disabled:opacity-40 transition-colors`}
         >
-          Archive
+          Archive project
         </button>
         <button
           type="button"
           onClick={() => { setConfirming('delete'); setError(null); setDeleteConfirmText('') }}
           disabled={isPending}
-          className="px-2.5 py-1 text-[11px] text-blocked-text border border-blocked-text/30 rounded hover:bg-blocked-bg disabled:opacity-40 transition-colors"
+          className={`${prominent ? 'px-3 py-2 text-[12px]' : 'px-2.5 py-1 text-[11px]'} text-blocked-text border border-blocked-text/40 rounded hover:bg-blocked-bg disabled:opacity-40 transition-colors`}
         >
-          Delete
+          Delete project permanently
         </button>
+        </div>
       </div>
 
       {confirming && (
@@ -117,13 +127,13 @@ export function ProjectCleanupActions({
 
                 <div className="mb-4">
                   <label className="block text-[11px] text-ink-3 mb-1.5">
-                    Type <span className="font-mono font-medium text-ink-2">DELETE</span> to confirm
+                    Type <span className="font-mono font-medium text-ink-2">DELETE PROJECT</span> to confirm
                   </label>
                   <input
                     type="text"
                     value={deleteConfirmText}
                     onChange={e => setDeleteConfirmText(e.target.value)}
-                    placeholder="DELETE"
+                    placeholder="DELETE PROJECT"
                     autoFocus
                     className="w-full px-2.5 py-2 bg-canvas border border-line rounded-md text-[13px] text-ink font-mono placeholder-ink-3/40 focus:outline-none focus:border-blocked-text transition-colors"
                   />

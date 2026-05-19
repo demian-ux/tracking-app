@@ -69,17 +69,19 @@ export default async function ProjectDetailPage({ params }: Props) {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <ProjectCleanupActions
-            projectId={project.id}
-            projectName={project.name}
-            viewCount={project.view_count}
-            afterDeleteHref="/admin/projects"
-          />
           <Link href="/admin/projects" className="text-[12px] text-ink-3 hover:text-ink-2 transition-colors">
             &lt;- Back
           </Link>
         </div>
       </div>
+
+      <ProjectCleanupActions
+        projectId={project.id}
+        projectName={project.name}
+        viewCount={project.view_count}
+        afterDeleteHref="/admin/projects"
+        prominent
+      />
 
       <ProjectDetailClient
         project={project}

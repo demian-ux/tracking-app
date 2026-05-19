@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo, useTransition } from 'react'
+import { useState, useEffect, useMemo, useTransition, useCallback, memo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { startStage, finishStage, blockStage, ensureProjectWorkflow, undoStageAction, resetStage } from '@/lib/actions/stages'
 import type { StageType, TimeWindow } from '@/lib/types/database'
@@ -56,6 +56,7 @@ interface WidgetClientProps {
 }
 
 type ViewFilter = 'all' | 'mine' | 'available' | 'blocked' | 'done'
+type PendingAction = 'start' | 'done' | 'reset' | 'block' | 'undo' | null
 
 interface UndoState {
   msg: string
@@ -76,9 +77,85 @@ function initials(name: string): string {
   return name.split(' ').filter(Boolean).map(w => w[0]).join('').toUpperCase().slice(0, 2)
 }
 
+interface ViewCellProps {
+  view: { id: string; number: number; label: string }
+  state: ViewState | undefined
+  selected: boolean
+  conflict: boolean
+  prereqBlocked: boolean
+  prevStageName: string | null
+  userId: string
+  assignee: { name: string } | null
+  onToggle: (viewId: string) => void
+}
+
+const ViewCell = memo(function ViewCell({
+  view, state, selected, conflict, prereqBlocked, prevStageName, userId, assignee, onToggle,
+}: ViewCellProps) {
+  const isDone = state?.status === 'done'
+  const isMine = state?.status === 'in_progress' && state.assigned_user_id === userId
+  const isOther = state?.status === 'in_progress' && state.assigned_user_id !== userId
+  const isBlocked = state?.status === 'blocked'
+  const isReopened = state?.status === 'reopened'
+  const showAvatar = (isMine || isOther) && assignee && !selected
+
+  const statusLine = prereqBlocked
+    ? (prevStageName ? `Finish ${prevStageName} first` : 'Prerequisite incomplete')
+    : isDone ? 'Done'
+    : isMine ? 'In progress · you'
+    : isOther ? 'In progress · other'
+    : isBlocked ? (state?.block_reason ?? 'Blocked')
+    : isReopened ? 'Reopened'
+    : 'Not started'
+
+  return (
+    <button
+      type="button"
+      onClick={() => !prereqBlocked && onToggle(view.id)}
+      disabled={prereqBlocked}
+      title={statusLine}
+      className={[
+        'relative h-10 flex flex-col items-center justify-center text-[11px] font-medium rounded border transition-colors',
+        prereqBlocked
+          ? 'bg-surface text-ink-3 border-line opacity-50 cursor-not-allowed'
+          : selected
+            ? 'bg-accent text-canvas border-accent'
+            : conflict
+              ? 'bg-blocked-bg text-blocked-text border-blocked-text/30'
+              : isDone
+                ? 'bg-done-bg text-done-text border-done-text/20'
+                : isMine
+                  ? 'bg-surface text-accent border-accent/40'
+                  : isBlocked
+                    ? 'bg-blocked-bg text-blocked-text border-blocked-text/30'
+                    : isReopened
+                      ? 'bg-warn-bg text-warn-text border-warn-text/30'
+                      : isOther
+                        ? 'bg-surface text-ink-3 border-warn-text/30'
+                        : 'bg-surface text-ink-2 border-line hover:border-line-strong hover:text-ink',
+      ].join(' ')}
+    >
+      <span>{String(view.number).padStart(2, '0')}</span>
+      {prereqBlocked && <span className="text-[8px] mt-0.5 opacity-60">—</span>}
+      {!prereqBlocked && isDone && !selected && <span className="text-[8px] mt-0.5">✓</span>}
+      {!prereqBlocked && isBlocked && !selected && <span className="text-[8px] mt-0.5">!</span>}
+      {!prereqBlocked && isReopened && !selected && <span className="text-[8px] mt-0.5">↩</span>}
+      {showAvatar && (
+        <span className={[
+          'absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full text-[8px] font-bold flex items-center justify-center leading-none',
+          isMine ? 'bg-accent text-canvas' : 'bg-warn-text text-canvas',
+        ].join(' ')}>
+          {initials(assignee.name)}
+        </span>
+      )}
+    </button>
+  )
+})
+
 export function WidgetClient({ projects, userId, userRole, users, hasError }: WidgetClientProps) {
   const supabase = useMemo(() => createClient(), [])
   const [isPending, startTransition] = useTransition()
+  const [pendingAction, setPendingAction] = useState<PendingAction>(null)
 
   const [projectId, setProjectId] = useState('')
   const [stage, setStage] = useState<StageType | ''>('')
@@ -102,6 +179,31 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
 
   const project = projects.find(p => p.id === projectId) ?? null
   const usersById = useMemo(() => Object.fromEntries(users.map(u => [u.id, u])), [users])
+
+  function debugLog(label: string, payload?: unknown) {
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[Widget] ${label}`, payload ?? '')
+    }
+  }
+
+  function debugError(label: string, error: unknown) {
+    if (process.env.NODE_ENV === 'development') {
+      console.error(`[Widget] ${label}`, error)
+    }
+  }
+
+  function debugGate(action: string, reason: string | null) {
+    debugLog(`${action} gate`, {
+      reason,
+      startDisabledReason,
+      finishDisabledReason,
+      pendingAction,
+      projectId,
+      rounds: viewRounds,
+      stage,
+      selectedViewIds,
+    })
+  }
 
   // Load workflow when project changes
   useEffect(() => {
@@ -158,11 +260,31 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
     setStates((data ?? []) as ViewState[])
   }
 
+  const stateByViewStage = useMemo(() => {
+    const map = new Map<string, ViewState>()
+    for (const s of states) {
+      map.set(`${s.project_view_id}:${s.stage}`, s)
+    }
+    return map
+  }, [states])
+
   function getState(viewId: string, s: StageType) {
-    return states.find(x => x.project_view_id === viewId && x.stage === s)
+    return stateByViewStage.get(`${viewId}:${s}`)
   }
 
-  function toggleView(viewId: string) {
+  function mergeStates(updated: Partial<ViewState>[]) {
+    const byId = new Map(updated.map(s => [s.id!, s]))
+    setStates(prev => {
+      const mergedStates = prev.map(s => {
+        const u = byId.get(s.id)
+        return u ? { ...s, ...u } : s
+      })
+      debugLog('Merged states', mergedStates)
+      return mergedStates
+    })
+  }
+
+  const toggleView = useCallback((viewId: string) => {
     setSelectedViewIds(prev =>
       prev.includes(viewId) ? prev.filter(id => id !== viewId) : [...prev, viewId]
     )
@@ -170,7 +292,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
     setFeedback(null)
     setShowBlockPanel(false)
     setBlockReason('')
-  }
+  }, [])
 
   function clearSelection() {
     setSelectedViewIds([])
@@ -185,29 +307,6 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
 
   // ── Stage order enforcement ─────────────────────────────────────────────────
   const isAdmin = userRole === 'admin'
-
-  function prereqBlockedForView(viewId: string): boolean {
-    if (!stage || isAdmin) return false
-    const idx = STAGE_ORDER.indexOf(stage as StageType)
-    if (idx === 0) return false
-    const prev = STAGE_ORDER[idx - 1]
-    const prevState = getState(viewId, prev)
-    return !prevState || prevState.status !== 'done'
-  }
-
-  useEffect(() => {
-    if (!stage || isAdmin) return
-    const idx = STAGE_ORDER.indexOf(stage as StageType)
-    if (idx === 0) return
-    const prev = STAGE_ORDER[idx - 1]
-    setSelectedViewIds(ids =>
-      ids.filter(vid => {
-        const s = states.find(x => x.project_view_id === vid && x.stage === prev)
-        return s?.status === 'done'
-      })
-    )
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stage, states])
 
   const stageOrderBlock = (() => {
     if (!stage || selectedViewIds.length === 0 || isAdmin) return null
@@ -248,6 +347,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
 
   const canStart =
     !isPending &&
+    !pendingAction &&
     viewRounds.length > 0 &&
     !roundLoading &&
     !!stage &&
@@ -257,6 +357,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
 
   const canFinish =
     !isPending &&
+    !pendingAction &&
     viewRounds.length > 0 &&
     !roundLoading &&
     !!stage &&
@@ -267,6 +368,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
 
   const canBlock =
     !isPending &&
+    !pendingAction &&
     viewRounds.length > 0 &&
     !roundLoading &&
     !!stage &&
@@ -277,6 +379,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
 
   const startDisabledReason: string | null = (() => {
     if (isPending) return null
+    if (pendingAction) return `Waiting for ${pendingAction} to finish`
     if (!projectId) return null
     if (roundLoading) return 'Loading workflow…'
     if (workflowError) return workflowError
@@ -293,6 +396,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
 
   const finishDisabledReason: string | null = (() => {
     if (isPending || viewRounds.length === 0 || roundLoading || !stage || selectedViewIds.length === 0) return null
+    if (pendingAction) return `Waiting for ${pendingAction} to finish`
     if (!allSelectedHaveState) return 'Stage data still loading'
     if (selectedStates.some(s => s.status !== 'in_progress')) return 'Start this stage first'
     if (selectedStates.some(s => s.assigned_user_id !== userId)) return 'Assigned to someone else'
@@ -301,6 +405,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
 
   const canReset =
     !isPending &&
+    !pendingAction &&
     viewRounds.length > 0 &&
     !!stage &&
     selectedViewIds.length > 0 &&
@@ -331,95 +436,246 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
     setUndoState({ msg, restores, timerId })
   }
 
+  function rollback(snapshot: { id: string; status: string; assigned_user_id: string | null; block_reason?: string | null; latest_eta_date?: string | null; latest_eta_time_window?: TimeWindow | null }[]) {
+    setStates(prev => prev.map(s => {
+      const r = snapshot.find(x => x.id === s.id)
+      if (!r) return s
+      return {
+        ...s,
+        status: r.status as ViewState['status'],
+        assigned_user_id: r.assigned_user_id,
+        ...(r.block_reason !== undefined ? { block_reason: r.block_reason } : {}),
+        ...(r.latest_eta_date !== undefined ? { latest_eta_date: r.latest_eta_date } : {}),
+        ...(r.latest_eta_time_window !== undefined ? { latest_eta_time_window: r.latest_eta_time_window } : {}),
+      }
+    }))
+  }
+
   function handleStart() {
-    if (!canStart) return
+    debugLog('START clicked')
+    debugGate('START', canStart ? null : (startDisabledReason ?? 'Start is unavailable'))
+    if (!canStart) {
+      setFeedback({ ok: false, msg: startDisabledReason ?? 'Start is unavailable.' })
+      return
+    }
     setFeedback(null)
     const snapshot = selectedStates.map(s => ({
       id: s.id, status: s.status, assigned_user_id: s.assigned_user_id,
     }))
     const count = selectedViewIds.length
+    const viewIdsCopy = [...selectedViewIds]
+    const stageCopy = stage as StageType
+    const etaDateCopy = etaDate || null
+    const etaWindowCopy = (etaWindow || null) as TimeWindow | null
+
+    setStates(prev => prev.map(s =>
+      viewIdsCopy.includes(s.project_view_id) && s.stage === stageCopy
+        ? { ...s, status: 'in_progress', assigned_user_id: userId, latest_eta_date: etaDateCopy, latest_eta_time_window: etaWindowCopy }
+        : s
+    ))
+    clearSelection()
+    setPendingAction('start')
+
     startTransition(async () => {
-      const result = await startStage({
+      try {
+        debugLog('Calling startStage...', { projectId, viewIds: viewIdsCopy, stage: stageCopy, etaDate: etaDateCopy, etaTimeWindow: etaWindowCopy })
+        const result = await startStage({
         projectId,
-        viewIds: selectedViewIds,
-        stage: stage as StageType,
-        etaDate: etaDate || null,
-        etaTimeWindow: (etaWindow || null) as TimeWindow | null,
-      })
+        viewIds: viewIdsCopy,
+        stage: stageCopy,
+        etaDate: etaDateCopy,
+        etaTimeWindow: etaWindowCopy,
+        })
+        debugLog('startStage result', result)
       if (result.error === 'conflict') {
+        rollback(snapshot)
         setConflictViewIds('conflictingViewIds' in result ? result.conflictingViewIds ?? [] : [])
         setFeedback({ ok: false, msg: 'Conflict — those views are already in progress by someone else.' })
       } else if (result.error) {
+        rollback(snapshot)
         setFeedback({ ok: false, msg: result.error })
+        debugError('startStage error', result.error)
       } else {
-        clearSelection()
-        await reloadStates()
+        if (result.data?.updatedStates?.length) mergeStates(result.data.updatedStates as Partial<ViewState>[])
         armUndo(`Started ${count} view${count > 1 ? 's' : ''}`, snapshot)
+      }
+      } catch (error) {
+        rollback(snapshot)
+        setFeedback({ ok: false, msg: error instanceof Error ? error.message : 'Start failed.' })
+        debugError('startStage exception', error)
+      } finally {
+        setPendingAction(null)
       }
     })
   }
 
   function handleFinish() {
-    if (!canFinish) return
+    debugLog('DONE clicked')
+    debugGate('DONE', canFinish ? null : (finishDisabledReason ?? 'Mark done is unavailable'))
+    if (!canFinish) {
+      setFeedback({ ok: false, msg: finishDisabledReason ?? 'Mark done is unavailable.' })
+      return
+    }
     setFeedback(null)
     const snapshot = selectedStates.map(s => ({
       id: s.id, status: s.status, assigned_user_id: s.assigned_user_id,
     }))
     const count = selectedViewIds.length
+    const viewIdsCopy = [...selectedViewIds]
+    const stageCopy = stage as StageType
+
+    setStates(prev => prev.map(s =>
+      viewIdsCopy.includes(s.project_view_id) && s.stage === stageCopy
+        ? { ...s, status: 'done' }
+        : s
+    ))
+    clearSelection()
+    setPendingAction('done')
+
     startTransition(async () => {
-      const result = await finishStage({
+      try {
+        debugLog('Calling finishStage...', { projectId, viewIds: viewIdsCopy, stage: stageCopy })
+        const result = await finishStage({
         projectId,
-        viewIds: selectedViewIds,
-        stage: stage as StageType,
+        viewIds: viewIdsCopy,
+        stage: stageCopy,
       })
+        debugLog('finishStage result', result)
       if (result.error) {
+        rollback(snapshot)
         setFeedback({ ok: false, msg: result.error })
+        debugError('finishStage error', result.error)
       } else {
-        clearSelection()
-        await reloadStates()
+        if (result.data?.updatedStates?.length) mergeStates(result.data.updatedStates as Partial<ViewState>[])
         armUndo(`Marked ${count} view${count > 1 ? 's' : ''} done`, snapshot)
+      }
+      } catch (error) {
+        rollback(snapshot)
+        setFeedback({ ok: false, msg: error instanceof Error ? error.message : 'Mark done failed.' })
+        debugError('finishStage exception', error)
+      } finally {
+        setPendingAction(null)
       }
     })
   }
 
   function handleReset() {
-    if (!canReset) return
+    debugLog('RESET clicked')
+    debugGate('RESET', canReset ? null : 'Reset is unavailable')
+    if (!canReset) {
+      setFeedback({ ok: false, msg: 'Reset is unavailable for this selection.' })
+      return
+    }
     setFeedback(null)
+    const stageIdx = STAGE_ORDER.indexOf(stage as StageType)
+    const stagesToReset = STAGE_ORDER.slice(stageIdx)
+    const snapshot = states
+      .filter(s => selectedViewIds.includes(s.project_view_id) && stagesToReset.includes(s.stage))
+      .map(s => ({ id: s.id, status: s.status, assigned_user_id: s.assigned_user_id, block_reason: s.block_reason, latest_eta_date: s.latest_eta_date, latest_eta_time_window: s.latest_eta_time_window }))
+    const viewIdsCopy = [...selectedViewIds]
+    const stageCopy = stage as StageType
+
+    setStates(prev => prev.map(s =>
+      viewIdsCopy.includes(s.project_view_id) && stagesToReset.includes(s.stage)
+        ? { ...s, status: 'not_started', assigned_user_id: null, latest_eta_date: null, latest_eta_time_window: null, block_reason: null }
+        : s
+    ))
+    setShowResetConfirm(false)
+    setSelectedViewIds([])
+    setPendingAction('reset')
+
     startTransition(async () => {
-      const result = await resetStage(projectId, selectedViewIds, stage as StageType)
-      if (result.error) {
-        setFeedback({ ok: false, msg: result.error })
-      } else {
-        setFeedback({ ok: true, msg: 'Stages reset.' })
-        setShowResetConfirm(false)
-        setSelectedViewIds([])
-        await reloadStates()
+      try {
+        debugLog('Calling resetStage...', { projectId, viewIds: viewIdsCopy, stage: stageCopy })
+        const result = await resetStage(projectId, viewIdsCopy, stageCopy)
+        debugLog('resetStage result', result)
+        if (result.error) {
+          rollback(snapshot)
+          setFeedback({ ok: false, msg: result.error })
+          debugError('resetStage error', result.error)
+        } else if (result.data?.updatedStates?.length) {
+          mergeStates(result.data.updatedStates as Partial<ViewState>[])
+        }
+      } catch (error) {
+        rollback(snapshot)
+        setFeedback({ ok: false, msg: error instanceof Error ? error.message : 'Reset failed.' })
+        debugError('resetStage exception', error)
+      } finally {
+        setPendingAction(null)
       }
     })
   }
 
   async function handleUndo() {
-    if (!undoState) return
+    debugLog('UNDO clicked')
+    if (!undoState) {
+      debugGate('UNDO', 'No undo state')
+      return
+    }
     clearTimeout(undoState.timerId)
+    const restoresCopy = undoState.restores
     setUndoState(null)
-    const result = await undoStageAction(projectId, undoState.restores)
-    if (result.error) setFeedback({ ok: false, msg: result.error })
-    await reloadStates()
+    rollback(restoresCopy)
+    setPendingAction('undo')
+    try {
+      debugLog('Calling undoStageAction...', { projectId, restores: restoresCopy })
+      const result = await undoStageAction(projectId, restoresCopy)
+      debugLog('undoStageAction result', result)
+      if (result.error) {
+        setFeedback({ ok: false, msg: result.error })
+        debugError('undoStageAction error', result.error)
+        await reloadStates()
+      }
+    } catch (error) {
+      setFeedback({ ok: false, msg: error instanceof Error ? error.message : 'Undo failed.' })
+      debugError('undoStageAction exception', error)
+      await reloadStates()
+    } finally {
+      setPendingAction(null)
+    }
   }
 
   function handleBlock() {
-    if (!canBlock || !blockReason) return
+    debugLog('BLOCK clicked')
+    debugGate('BLOCK', canBlock && blockReason ? null : (!blockReason ? 'Select a block reason' : 'Block is unavailable'))
+    if (!canBlock || !blockReason) {
+      setFeedback({ ok: false, msg: !blockReason ? 'Select a block reason.' : 'Block is unavailable for this selection.' })
+      return
+    }
     setFeedback(null)
+    const snapshot = selectedStates.map(s => ({
+      id: s.id, status: s.status, assigned_user_id: s.assigned_user_id,
+    }))
+    const viewIdsCopy = [...selectedViewIds]
+    const stageCopy = stage as StageType
+    const reasonCopy = blockReason
+
+    setStates(prev => prev.map(s =>
+      viewIdsCopy.includes(s.project_view_id) && s.stage === stageCopy
+        ? { ...s, status: 'blocked', block_reason: reasonCopy }
+        : s
+    ))
+    clearSelection()
+    setPendingAction('block')
+
     startTransition(async () => {
-      const result = await blockStage(
-        projectId, selectedViewIds, stage as StageType, blockReason,
-      )
-      if (result.error) {
-        setFeedback({ ok: false, msg: result.error })
-      } else {
-        setFeedback({ ok: true, msg: 'Marked as blocked.' })
-        clearSelection()
-        await reloadStates()
+      try {
+        debugLog('Calling blockStage...', { projectId, viewIds: viewIdsCopy, stage: stageCopy, reason: reasonCopy })
+        const result = await blockStage(projectId, viewIdsCopy, stageCopy, reasonCopy)
+        debugLog('blockStage result', result)
+        if (result.error) {
+          rollback(snapshot)
+          setFeedback({ ok: false, msg: result.error })
+          debugError('blockStage error', result.error)
+        } else if (result.data?.updatedStates?.length) {
+          mergeStates(result.data.updatedStates as Partial<ViewState>[])
+        }
+      } catch (error) {
+        rollback(snapshot)
+        setFeedback({ ok: false, msg: error instanceof Error ? error.message : 'Block failed.' })
+        debugError('blockStage exception', error)
+      } finally {
+        setPendingAction(null)
       }
     })
   }
@@ -521,10 +777,17 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
             <div className="flex items-center gap-2">
               <span className="text-[10px] tracking-[0.18em] uppercase text-ink-3">Views</span>
               {(() => {
-                const eligible = filteredViews.filter(v => !prereqBlockedForView(v.id))
+                const stageIdx = STAGE_ORDER.indexOf(stage as StageType)
+                const prevStage = stageIdx > 0 ? STAGE_ORDER[stageIdx - 1] : null
+                const eligible = filteredViews.filter(v => {
+                  if (isAdmin || !prevStage) return true
+                  const prereqState = getState(v.id, prevStage)
+                  return prereqState?.status === 'done'
+                })
                 const allSelected = eligible.length > 0 && eligible.every(v => selectedViewIds.includes(v.id))
                 return eligible.length > 0 ? (
                   <button
+                    type="button"
                     onClick={() => {
                       if (allSelected) {
                         setSelectedViewIds([])
@@ -545,6 +808,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
             <div className="flex gap-1">
               {(['all', 'mine', 'available', 'blocked', 'done'] as ViewFilter[]).map(f => (
                 <button
+                  type="button"
                   key={f}
                   onClick={() => {
                     setViewFilter(f)
@@ -575,81 +839,26 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
 
           <div className="grid grid-cols-5 gap-1.5">
             {filteredViews.map(view => {
+              const stageIdx = STAGE_ORDER.indexOf(stage as StageType)
+              const prevStage = stageIdx > 0 ? STAGE_ORDER[stageIdx - 1] : null
               const s = getState(view.id, stage as StageType)
-              const selected = selectedViewIds.includes(view.id)
-              const conflict = conflictViewIds.includes(view.id)
-              const prereqBlocked = prereqBlockedForView(view.id)
-              const isDone = s?.status === 'done'
-              const isMine = s?.status === 'in_progress' && s.assigned_user_id === userId
-              const isOther = s?.status === 'in_progress' && s.assigned_user_id !== userId
-              const isBlocked = s?.status === 'blocked'
-              const isReopened = s?.status === 'reopened'
-
-              const idx = STAGE_ORDER.indexOf(stage as StageType)
-              const prevStage = idx > 0 ? STAGE_ORDER[idx - 1] : null
-              const prereqTitle = prereqBlocked && prevStage
-                ? `Finish ${STAGE_LABELS[prevStage]} first`
-                : null
-
-              const statusLine = prereqBlocked
-                ? (prereqTitle ?? 'Prerequisite incomplete')
-                : isDone ? 'Done'
-                : isMine ? 'In progress · you'
-                : isOther ? 'In progress · other'
-                : isBlocked ? (s?.block_reason ?? 'Blocked')
-                : isReopened ? 'Reopened'
-                : 'Not started'
-
-              // Avatar: show initials for whoever is working on this view
+              const prereqState = prevStage ? getState(view.id, prevStage) : null
+              const prereqBlocked = !isAdmin && !!prevStage && (!prereqState || prereqState.status !== 'done')
               const assigneeId = s?.assigned_user_id
               const assignee = assigneeId ? usersById[assigneeId] : null
-              const showAvatar = (isMine || isOther) && assignee && !selected
-
               return (
-                <button
+                <ViewCell
                   key={view.id}
-                  onClick={() => !prereqBlocked && toggleView(view.id)}
-                  disabled={prereqBlocked}
-                  title={statusLine}
-                  className={[
-                    'relative h-10 flex flex-col items-center justify-center text-[11px] font-medium rounded border transition-colors',
-                    prereqBlocked
-                      ? 'bg-surface text-ink-3 border-line opacity-50 cursor-not-allowed'
-                      : selected
-                        ? 'bg-accent text-canvas border-accent'
-                        : conflict
-                          ? 'bg-blocked-bg text-blocked-text border-blocked-text/30'
-                          : isDone
-                            ? 'bg-done-bg text-done-text border-done-text/20'
-                            : isMine
-                              ? 'bg-surface text-accent border-accent/40'
-                              : isBlocked
-                                ? 'bg-blocked-bg text-blocked-text border-blocked-text/30'
-                                : isReopened
-                                  ? 'bg-warn-bg text-warn-text border-warn-text/30'
-                                  : isOther
-                                    ? 'bg-surface text-ink-3 border-warn-text/30'
-                                    : 'bg-surface text-ink-2 border-line hover:border-line-strong hover:text-ink',
-                  ].join(' ')}
-                >
-                  <span>{String(view.number).padStart(2, '0')}</span>
-                  {prereqBlocked && <span className="text-[8px] mt-0.5 opacity-60">—</span>}
-                  {!prereqBlocked && isDone && !selected && <span className="text-[8px] mt-0.5">✓</span>}
-                  {!prereqBlocked && isBlocked && !selected && <span className="text-[8px] mt-0.5">!</span>}
-                  {!prereqBlocked && isReopened && !selected && <span className="text-[8px] mt-0.5">↩</span>}
-
-                  {/* Avatar badge */}
-                  {showAvatar && (
-                    <span className={[
-                      'absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full text-[8px] font-bold flex items-center justify-center leading-none',
-                      isMine
-                        ? 'bg-accent text-canvas'
-                        : 'bg-warn-text text-canvas',
-                    ].join(' ')}>
-                      {initials(assignee.name)}
-                    </span>
-                  )}
-                </button>
+                  view={view}
+                  state={s}
+                  selected={selectedViewIds.includes(view.id)}
+                  conflict={conflictViewIds.includes(view.id)}
+                  prereqBlocked={prereqBlocked}
+                  prevStageName={prevStage ? STAGE_LABELS[prevStage] : null}
+                  userId={userId}
+                  assignee={assignee}
+                  onToggle={toggleView}
+                />
               )
             })}
           </div>
@@ -669,6 +878,8 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
           <div>filter:  {viewFilter}</div>
           <div>views:   {selectedViewIds.length ? selectedViewIds.map(id => views.find(v => v.id === id)?.label ?? id).join(', ') : '—'}</div>
           <div>canStart: {String(canStart)} · canFinish: {String(canFinish)} · canBlock: {String(canBlock)}</div>
+          <div>pending: {pendingAction ?? 'none'}</div>
+          <div>disabled: {startDisabledReason ?? finishDisabledReason ?? 'none'}</div>
           {workflowError && <div className="text-blocked-text">workflow error: {workflowError}</div>}
         </div>
       )}
@@ -679,12 +890,14 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
           <div className="flex items-center gap-3 bg-elevated border border-line-strong rounded-lg px-4 py-2.5 shadow-xl pointer-events-auto">
             <span className="text-[12px] text-ink">{undoState.msg}</span>
             <button
+              type="button"
               onClick={handleUndo}
               className="text-[12px] text-accent font-medium hover:text-accent-dim transition-colors"
             >
               Undo
             </button>
             <button
+              type="button"
               onClick={() => { clearTimeout(undoState.timerId); setUndoState(null) }}
               className="text-[11px] text-ink-3 hover:text-ink-2 transition-colors"
             >
@@ -714,6 +927,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                   )}
                 </div>
                 <button
+                  type="button"
                   onClick={clearSelection}
                   className="text-[11px] text-ink-3 hover:text-ink-2 transition-colors px-1.5 py-0.5 rounded hover:bg-surface"
                 >
@@ -775,6 +989,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                   <div className="space-y-2">
                     <div className="flex gap-2">
                       <button
+                        type="button"
                         onClick={handleStart}
                         disabled={!canStart}
                         className="flex-1 h-9 bg-accent text-canvas text-[13px] font-medium rounded-lg hover:bg-accent-dim disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
@@ -782,6 +997,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                         {isPending ? '…' : 'Start'}
                       </button>
                       <button
+                        type="button"
                         onClick={handleFinish}
                         disabled={!canFinish}
                         className="flex-1 h-9 bg-surface text-ink text-[13px] border border-line-strong rounded-lg hover:bg-canvas disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
@@ -790,6 +1006,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                       </button>
                       {canBlock && (
                         <button
+                          type="button"
                           onClick={() => setShowBlockPanel(true)}
                           disabled={isPending}
                           className="h-9 px-3 bg-surface text-blocked-text text-[13px] border border-blocked-text/30 rounded-lg hover:bg-blocked-bg disabled:opacity-40 transition-colors"
@@ -800,6 +1017,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                     </div>
                     {canReset && (
                       <button
+                        type="button"
                         onClick={() => setShowResetConfirm(true)}
                         disabled={isPending}
                         className="w-full h-8 bg-surface text-ink-2 text-[12px] border border-line rounded-lg hover:border-line-strong hover:text-ink disabled:opacity-40 transition-colors"
@@ -814,6 +1032,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                 {showBlockPanel && (
                   <div className="flex gap-2">
                     <button
+                      type="button"
                       onClick={handleBlock}
                       disabled={isPending || !blockReason}
                       className="flex-1 h-9 bg-blocked-bg text-blocked-text text-[13px] font-medium border border-blocked-text/30 rounded-lg hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
@@ -821,6 +1040,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                       {isPending ? '…' : 'Confirm block'}
                     </button>
                     <button
+                      type="button"
                       onClick={() => { setShowBlockPanel(false); setBlockReason('') }}
                       disabled={isPending}
                       className="h-9 px-3 bg-surface text-ink-2 text-[13px] border border-line rounded-lg hover:bg-canvas transition-colors"
@@ -843,6 +1063,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                     </div>
                     <div className="flex gap-2">
                       <button
+                        type="button"
                         onClick={handleReset}
                         disabled={isPending}
                         className="flex-1 h-9 bg-surface text-ink text-[13px] font-medium border border-line-strong rounded-lg hover:bg-elevated disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
@@ -850,6 +1071,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                         {isPending ? '…' : 'Reset stages'}
                       </button>
                       <button
+                        type="button"
                         onClick={() => setShowResetConfirm(false)}
                         disabled={isPending}
                         className="h-9 px-3 bg-surface text-ink-2 text-[13px] border border-line rounded-lg hover:bg-canvas transition-colors"
