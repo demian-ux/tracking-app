@@ -6,13 +6,13 @@ interface Props {
 
 export function ViewSwitcher({ active }: Props) {
   return (
-    <div className="flex items-center bg-surface border border-line rounded-md p-0.5 gap-0.5">
+    <div className="flex items-center bg-elevated border border-line rounded-lg p-0.5 gap-0.5">
       <Link
         href="/app/widget"
         className={[
-          'px-3 py-1 text-[11px] font-medium rounded transition-colors',
+          'px-3 py-1 text-[11px] font-medium rounded-md transition-all',
           active === 'widget'
-            ? 'bg-elevated text-ink shadow-sm'
+            ? 'bg-overlay text-ink'
             : 'text-ink-3 hover:text-ink-2',
         ].join(' ')}
       >
@@ -21,9 +21,9 @@ export function ViewSwitcher({ active }: Props) {
       <Link
         href="/admin/projects"
         className={[
-          'px-3 py-1 text-[11px] font-medium rounded transition-colors',
+          'px-3 py-1 text-[11px] font-medium rounded-md transition-all',
           active === 'admin'
-            ? 'bg-elevated text-ink shadow-sm'
+            ? 'bg-overlay text-ink'
             : 'text-ink-3 hover:text-ink-2',
         ].join(' ')}
       >

@@ -1,8 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
-import Link from 'next/link'
 import { ensureUserProfile } from '@/lib/utils/ensure-profile'
 import { ViewSwitcher } from '@/components/ui/ViewSwitcher'
+import { AdminNavLink } from '@/components/ui/AdminNavLink'
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient()
@@ -20,12 +20,12 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   if (profileError || !profile) {
     return (
       <div className="min-h-screen bg-canvas flex items-center justify-center">
-        <div className="max-w-md w-full mx-6 p-5 bg-surface border border-line rounded-md">
+        <div className="max-w-md w-full mx-6 p-5 bg-surface border border-line rounded-lg">
           <p className="text-[11px] tracking-[0.12em] uppercase text-blocked-text mb-2">Database not set up</p>
           <p className="text-[13px] text-ink-2 mb-4">
             Run migrations first, then promote your account to admin:
           </p>
-          <pre className="text-[11px] bg-canvas text-accent p-3 rounded overflow-x-auto font-mono">
+          <pre className="text-[11px] bg-elevated text-accent p-3 rounded-md overflow-x-auto font-mono">
             {`UPDATE public.users SET role = 'admin'\nWHERE email = '${user.email}';`}
           </pre>
           {profileError && <p className="mt-3 text-[11px] text-blocked-text font-mono">{profileError.message}</p>}
@@ -38,17 +38,19 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   return (
     <div className="min-h-screen bg-canvas">
-      <header className="border-b border-line sticky top-0 z-10 bg-canvas">
-        <div className="max-w-6xl mx-auto px-8 h-11 flex items-center justify-between">
+      <header className="border-b border-line sticky top-0 z-10 bg-canvas/95 backdrop-blur-sm">
+        <div className="max-w-6xl mx-auto px-8 h-12 flex items-center justify-between">
           <div className="flex items-center gap-6">
-            <span className="text-[11px] tracking-[0.15em] uppercase text-ink-3">Oaki Studio</span>
-            <nav className="flex items-center gap-1">
-              <NavLink href="/admin/today">Today</NavLink>
-              <NavLink href="/admin/projects">Projects</NavLink>
-              <NavLink href="/admin/clients">Clients</NavLink>
-              <NavLink href="/admin/timeline">Timeline</NavLink>
-              <NavLink href="/admin/events">Events</NavLink>
-              <NavLink href="/admin/integrity">Integrity</NavLink>
+            <span className="text-[11px] tracking-[0.18em] uppercase text-ink-3 font-medium select-none">
+              Oaki
+            </span>
+            <nav className="flex items-center gap-0.5">
+              <AdminNavLink href="/admin/today">Today</AdminNavLink>
+              <AdminNavLink href="/admin/projects">Projects</AdminNavLink>
+              <AdminNavLink href="/admin/clients">Clients</AdminNavLink>
+              <AdminNavLink href="/admin/timeline">Timeline</AdminNavLink>
+              <AdminNavLink href="/admin/events">Events</AdminNavLink>
+              <AdminNavLink href="/admin/integrity">Integrity</AdminNavLink>
             </nav>
           </div>
           <div className="flex items-center gap-4">
@@ -61,16 +63,5 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         {children}
       </main>
     </div>
-  )
-}
-
-function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
-  return (
-    <Link
-      href={href}
-      className="px-3 py-1 text-[12px] text-ink-2 hover:text-ink hover:bg-elevated rounded transition-colors"
-    >
-      {children}
-    </Link>
   )
 }

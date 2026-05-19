@@ -2,35 +2,35 @@
 
 @theme {
   /* ── Surfaces ── */
-  --color-canvas:   #222222;
-  --color-surface:  #2a2a2a;
-  --color-elevated: #303030;
-  --color-overlay:  #383838;
+  --color-canvas:   #111111;
+  --color-surface:  #1b1b1b;
+  --color-elevated: #242424;
+  --color-overlay:  #2e2e2e;
 
   /* ── Borders ── */
-  --color-line:        #333333;
-  --color-line-strong: #464646;
+  --color-line:        #262626;
+  --color-line-strong: #3a3a3a;
 
   /* ── Text ── */
-  --color-ink:   #f0f0f0;
-  --color-ink-2: #888888;
-  --color-ink-3: #4a4a4a;
+  --color-ink:   #ececec;
+  --color-ink-2: #767676;
+  --color-ink-3: #3e3e3e;
 
   /* ── Brand ── */
-  --color-accent:     #c6b193;
-  --color-accent-dim: #9e8c74;
+  --color-accent:     #c9a96d;
+  --color-accent-dim: #a2895a;
 
   /* ── Status ── */
-  --color-done-bg:      #1e3328;
-  --color-done-text:    #5fa876;
-  --color-progress-bg:  #1a2e48;
-  --color-progress-text: #5588c4;
-  --color-warn-bg:      #302814;
-  --color-warn-text:    #b89040;
-  --color-blocked-bg:   #331818;
-  --color-blocked-text: #c45050;
-  --color-reopened-bg:  #332214;
-  --color-reopened-text:#c48040;
+  --color-done-bg:       #16291e;
+  --color-done-text:     #52b876;
+  --color-progress-bg:   #131f35;
+  --color-progress-text: #5292d6;
+  --color-warn-bg:       #271e0d;
+  --color-warn-text:     #c49838;
+  --color-blocked-bg:    #271414;
+  --color-blocked-text:  #cc5252;
+  --color-reopened-bg:   #24190d;
+  --color-reopened-text: #c87c3a;
 
   /* ── Typography ── */
   --font-sans: var(--font-geist-sans);
@@ -48,23 +48,24 @@ html, body {
 }
 
 body {
-  background-color: #222222;
-  color: #f0f0f0;
+  background-color: #111111;
+  color: #ececec;
   font-family: var(--font-geist-sans), system-ui, sans-serif;
   font-size: 13px;
   line-height: 1.5;
+  letter-spacing: -0.012em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 /* ── Selection ── */
 ::selection {
-  background-color: rgba(198, 177, 147, 0.25);
+  background-color: rgba(201, 169, 109, 0.2);
 }
 
 /* ── Focus ring ── */
 :focus-visible {
-  outline: 1px solid #c6b193;
+  outline: 1px solid #c9a96d;
   outline-offset: 2px;
 }
 
@@ -77,17 +78,17 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #464646;
+  background: #3a3a3a;
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #585858;
+  background: #505050;
 }
 
 /* ── Custom select arrow ── */
 select {
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888888' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23767676' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 10px center;
   padding-right: 28px !important;

@@ -34,9 +34,9 @@ export default async function WidgetPage() {
 
   return (
     <div className="min-h-screen bg-canvas flex flex-col">
-      <header className="border-b border-line shrink-0">
-        <div className="max-w-[460px] mx-auto px-6 h-11 flex items-center justify-between">
-          <span className="text-[11px] tracking-[0.15em] uppercase text-ink-3">Oaki Studio</span>
+      <header className="border-b border-line shrink-0 bg-canvas/95 backdrop-blur-sm">
+        <div className="max-w-[460px] mx-auto px-6 h-12 flex items-center justify-between">
+          <span className="text-[11px] tracking-[0.18em] uppercase text-ink-3 font-medium select-none">Oaki</span>
           <div className="flex items-center gap-4">
             <span className="text-[12px] text-ink-2">{currentUser?.name ?? user.email}</span>
             {currentUser?.role === 'admin' && <ViewSwitcher active="widget" />}
