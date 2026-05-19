@@ -14,6 +14,7 @@ export default async function WidgetPage() {
   const [
     { data: projects, error: projectsError },
     { data: currentUser },
+    { data: teamMembers },
   ] = await Promise.all([
     supabase
       .from('projects')
@@ -25,6 +26,10 @@ export default async function WidgetPage() {
       .select('id, name, role')
       .eq('id', user.id)
       .single(),
+    supabase
+      .from('users')
+      .select('id, name')
+      .in('role', ['admin', 'team_member']),
   ])
 
   return (
@@ -67,6 +72,7 @@ export default async function WidgetPage() {
           projects={(projects ?? []) as unknown as Parameters<typeof WidgetClient>[0]['projects']}
           userId={user.id}
           userRole={currentUser?.role ?? 'team_member'}
+          users={teamMembers ?? []}
           hasError={!!projectsError}
         />
       </main>

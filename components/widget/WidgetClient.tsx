@@ -42,12 +42,20 @@ interface ViewRound {
   status: string
 }
 
+interface TeamMember {
+  id: string
+  name: string
+}
+
 interface WidgetClientProps {
   projects: Project[]
   userId: string
   userRole: string
+  users: TeamMember[]
   hasError?: boolean
 }
+
+type ViewFilter = 'all' | 'mine' | 'available' | 'blocked' | 'done'
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
@@ -58,7 +66,11 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   )
 }
 
-export function WidgetClient({ projects, userId, userRole, hasError }: WidgetClientProps) {
+function initials(name: string): string {
+  return name.split(' ').filter(Boolean).map(w => w[0]).join('').toUpperCase().slice(0, 2)
+}
+
+export function WidgetClient({ projects, userId, userRole, users, hasError }: WidgetClientProps) {
   const supabase = useMemo(() => createClient(), [])
   const [isPending, startTransition] = useTransition()
 
@@ -67,6 +79,7 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
   const [selectedViewIds, setSelectedViewIds] = useState<string[]>([])
   const [etaDate, setEtaDate] = useState('')
   const [etaWindow, setEtaWindow] = useState<TimeWindow | ''>('')
+  const [viewFilter, setViewFilter] = useState<ViewFilter>('all')
 
   const [views, setViews] = useState<View[]>([])
   const [viewRounds, setViewRounds] = useState<ViewRound[]>([])
@@ -76,16 +89,15 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
   const [conflictViewIds, setConflictViewIds] = useState<string[]>([])
   const [feedback, setFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
 
-  // Block flow state
   const [showBlockPanel, setShowBlockPanel] = useState(false)
   const [blockReason, setBlockReason] = useState('')
 
   const project = projects.find(p => p.id === projectId) ?? null
+  const usersById = useMemo(() => Object.fromEntries(users.map(u => [u.id, u])), [users])
 
   // Load workflow when project changes
   useEffect(() => {
     if (!projectId) return
-
     let cancelled = false
 
     async function load() {
@@ -99,10 +111,7 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
         ensureProjectWorkflow(projectId),
       ])
 
-      console.log('ensureProjectWorkflow result:', workflow)
-
       if (cancelled) return
-
       setRoundLoading(false)
 
       if (viewsResult.error) {
@@ -155,8 +164,17 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
     setBlockReason('')
   }
 
+  function clearSelection() {
+    setSelectedViewIds([])
+    setConflictViewIds([])
+    setFeedback(null)
+    setShowBlockPanel(false)
+    setBlockReason('')
+    setEtaDate('')
+    setEtaWindow('')
+  }
+
   // ── Stage order enforcement ─────────────────────────────────────────────────
-  // Admins bypass stage order. Team members must complete previous stages first.
   const isAdmin = userRole === 'admin'
 
   function prereqBlockedForView(viewId: string): boolean {
@@ -168,7 +186,6 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
     return !prevState || prevState.status !== 'done'
   }
 
-  // Auto-deselect views that become prereq-blocked when stage or states change
   useEffect(() => {
     if (!stage || isAdmin) return
     const idx = STAGE_ORDER.indexOf(stage as StageType)
@@ -196,6 +213,19 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
     const labels = blocked.map(vid => views.find(v => v.id === vid)?.label ?? vid)
     return `Finish ${STAGE_LABELS[prev]} first for: ${labels.join(', ')}`
   })()
+
+  // ── Quick filter ────────────────────────────────────────────────────────────
+  const filteredViews = views.filter(view => {
+    if (!stage || viewFilter === 'all') return true
+    const s = getState(view.id, stage as StageType)
+    switch (viewFilter) {
+      case 'mine':      return s?.status === 'in_progress' && s.assigned_user_id === userId
+      case 'available': return s?.status === 'not_started' || s?.status === 'reopened'
+      case 'blocked':   return s?.status === 'blocked'
+      case 'done':      return s?.status === 'done'
+      default:          return true
+    }
+  })
 
   // ── Action eligibility ──────────────────────────────────────────────────────
   const selectedStates = selectedViewIds
@@ -236,7 +266,6 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
       s => s.status === 'in_progress' && s.assigned_user_id === userId
     )
 
-  // Human-readable reason for why Start is disabled (shown below buttons)
   const startDisabledReason: string | null = (() => {
     if (isPending) return null
     if (!projectId) return null
@@ -266,7 +295,6 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
     : 0
 
   // ── Handlers ────────────────────────────────────────────────────────────────
-
   function handleStart() {
     if (!canStart) return
     setFeedback(null)
@@ -284,8 +312,8 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
       } else if (result.error) {
         setFeedback({ ok: false, msg: result.error })
       } else {
-        setFeedback({ ok: true, msg: 'Stage started.' })
-        setSelectedViewIds([])
+        setFeedback({ ok: true, msg: `Started ${selectedViewIds.length} view${selectedViewIds.length > 1 ? 's' : ''}.` })
+        clearSelection()
         await reloadStates()
       }
     })
@@ -303,8 +331,8 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
       if (result.error) {
         setFeedback({ ok: false, msg: result.error })
       } else {
-        setFeedback({ ok: true, msg: 'Stage marked done.' })
-        setSelectedViewIds([])
+        setFeedback({ ok: true, msg: `Marked ${selectedViewIds.length} view${selectedViewIds.length > 1 ? 's' : ''} done.` })
+        clearSelection()
         await reloadStates()
       }
     })
@@ -321,20 +349,20 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
         setFeedback({ ok: false, msg: result.error })
       } else {
         setFeedback({ ok: true, msg: 'Marked as blocked.' })
-        setSelectedViewIds([])
-        setShowBlockPanel(false)
-        setBlockReason('')
+        clearSelection()
         await reloadStates()
       }
     })
   }
+
+  const barVisible = selectedViewIds.length > 0
 
   if (!projects.length && !hasError) {
     return <p className="text-[13px] text-ink-3">No active projects. An admin needs to create one.</p>
   }
 
   return (
-    <div className="space-y-6">
+    <div className={barVisible ? 'space-y-6 pb-52' : 'space-y-6'}>
 
       {/* Project */}
       <div>
@@ -344,14 +372,9 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
           onChange={e => {
             const next = e.target.value
             setProjectId(next)
-            setSelectedViewIds([])
-            setConflictViewIds([])
-            setShowBlockPanel(false)
-            setBlockReason('')
+            clearSelection()
             setStage('')
-            setEtaDate('')
-            setEtaWindow('')
-            setFeedback(null)
+            setViewFilter('all')
             setWorkflowError(null)
             setViewRounds([])
             setStates([])
@@ -369,7 +392,6 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
         </select>
       </div>
 
-      {/* Loading indicator */}
       {roundLoading && (
         <p className="text-[11px] text-ink-3">Loading workflow…</p>
       )}
@@ -405,11 +427,8 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
                 type="button"
                 onClick={() => {
                   setStage(s)
-                  setSelectedViewIds([])
-                  setFeedback(null)
-                  setShowBlockPanel(false)
-                  setBlockReason('')
-                  setConflictViewIds([])
+                  clearSelection()
+                  setViewFilter('all')
                 }}
                 className={[
                   'flex-1 py-2 text-[12px] font-medium rounded-md border transition-colors',
@@ -428,9 +447,45 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
       {/* Views */}
       {stage && views.length > 0 && (
         <div>
-          <SectionLabel>Views</SectionLabel>
+          <div className="flex items-center justify-between mb-2.5">
+            <div className="text-[10px] tracking-[0.18em] uppercase text-ink-3 flex items-center gap-2">
+              <span>Views</span>
+              <span className="flex-1 border-t border-line w-4" />
+            </div>
+            {/* Quick filters */}
+            <div className="flex gap-1">
+              {(['all', 'mine', 'available', 'blocked', 'done'] as ViewFilter[]).map(f => (
+                <button
+                  key={f}
+                  onClick={() => {
+                    setViewFilter(f)
+                    setSelectedViewIds(ids => ids.filter(id => {
+                      if (f === 'all') return true
+                      const s = getState(id, stage as StageType)
+                      switch (f) {
+                        case 'mine':      return s?.status === 'in_progress' && s.assigned_user_id === userId
+                        case 'available': return s?.status === 'not_started' || s?.status === 'reopened'
+                        case 'blocked':   return s?.status === 'blocked'
+                        case 'done':      return s?.status === 'done'
+                        default:          return true
+                      }
+                    }))
+                  }}
+                  className={[
+                    'px-2 py-0.5 text-[10px] rounded transition-colors',
+                    viewFilter === f
+                      ? 'bg-elevated text-ink border border-line-strong'
+                      : 'text-ink-3 hover:text-ink-2',
+                  ].join(' ')}
+                >
+                  {f === 'all' ? 'All' : f === 'mine' ? 'Mine' : f.charAt(0).toUpperCase() + f.slice(1)}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="grid grid-cols-5 gap-1.5">
-            {views.map(view => {
+            {filteredViews.map(view => {
               const s = getState(view.id, stage as StageType)
               const selected = selectedViewIds.includes(view.id)
               const conflict = conflictViewIds.includes(view.id)
@@ -456,6 +511,11 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
                 : isReopened ? 'Reopened'
                 : 'Not started'
 
+              // Avatar: show initials for whoever is working on this view
+              const assigneeId = s?.assigned_user_id
+              const assignee = assigneeId ? usersById[assigneeId] : null
+              const showAvatar = (isMine || isOther) && assignee && !selected
+
               return (
                 <button
                   key={view.id}
@@ -463,7 +523,7 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
                   disabled={prereqBlocked}
                   title={statusLine}
                   className={[
-                    'h-10 flex flex-col items-center justify-center text-[11px] font-medium rounded border transition-colors',
+                    'relative h-10 flex flex-col items-center justify-center text-[11px] font-medium rounded border transition-colors',
                     prereqBlocked
                       ? 'bg-surface text-ink-3 border-line opacity-50 cursor-not-allowed'
                       : selected
@@ -488,117 +548,26 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
                   {!prereqBlocked && isDone && !selected && <span className="text-[8px] mt-0.5">✓</span>}
                   {!prereqBlocked && isBlocked && !selected && <span className="text-[8px] mt-0.5">!</span>}
                   {!prereqBlocked && isReopened && !selected && <span className="text-[8px] mt-0.5">↩</span>}
+
+                  {/* Avatar badge */}
+                  {showAvatar && (
+                    <span className={[
+                      'absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full text-[8px] font-bold flex items-center justify-center leading-none',
+                      isMine
+                        ? 'bg-accent text-canvas'
+                        : 'bg-warn-text text-canvas',
+                    ].join(' ')}>
+                      {initials(assignee.name)}
+                    </span>
+                  )}
                 </button>
               )
             })}
           </div>
-        </div>
-      )}
 
-      {/* ETA — optional, shown whenever views are selected */}
-      {selectedViewIds.length > 0 && !showBlockPanel && (
-        <div>
-          <SectionLabel>ETA <span className="normal-case tracking-normal text-ink-3 ml-1">— optional</span></SectionLabel>
-          <div className="flex gap-2">
-            <input
-              type="date"
-              value={etaDate}
-              onChange={e => setEtaDate(e.target.value)}
-              className="flex-1 px-3 py-2 bg-surface border border-line rounded-md text-[13px] text-ink focus:outline-none focus:border-accent transition-colors hover:border-line-strong [color-scheme:dark]"
-            />
-            <select
-              value={etaWindow}
-              onChange={e => setEtaWindow(e.target.value as TimeWindow)}
-              className="w-28 px-3 py-2 bg-surface border border-line rounded-md text-[13px] text-ink focus:outline-none focus:border-accent transition-colors hover:border-line-strong"
-            >
-              <option value="">Time</option>
-              {TIME_WINDOWS.map(w => <option key={w} value={w}>{w}</option>)}
-            </select>
-          </div>
-        </div>
-      )}
-
-      {/* Block reason panel */}
-      {showBlockPanel && selectedViewIds.length > 0 && (
-        <div>
-          <SectionLabel>Block reason</SectionLabel>
-          <select
-            value={blockReason}
-            onChange={e => setBlockReason(e.target.value)}
-            className="w-full px-3 py-2 bg-surface border border-blocked-text/30 rounded-md text-[13px] text-ink focus:outline-none focus:border-blocked-text transition-colors"
-          >
-            <option value="">Select reason…</option>
-            {BLOCK_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
-          </select>
-        </div>
-      )}
-
-      {/* Feedback */}
-      {feedback && (
-        <p className={`text-[12px] ${feedback.ok ? 'text-done-text' : 'text-blocked-text'}`}>
-          {feedback.msg}
-        </p>
-      )}
-
-      {/* Actions */}
-      {selectedViewIds.length > 0 && !showBlockPanel && (
-        <div className="space-y-2">
-          <div className="flex gap-2">
-            <div className="flex-1 flex flex-col gap-1">
-              <button
-                onClick={handleStart}
-                disabled={!canStart}
-                className="w-full h-9 bg-accent text-canvas text-[13px] font-medium rounded-md hover:bg-accent-dim disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              >
-                {isPending ? '…' : 'Start stage'}
-              </button>
-              {startDisabledReason && (
-                <p className="text-[10px] text-ink-3 text-center">{startDisabledReason}</p>
-              )}
-            </div>
-            <div className="flex-1 flex flex-col gap-1">
-              <button
-                onClick={handleFinish}
-                disabled={!canFinish}
-                className="w-full h-9 bg-surface text-ink text-[13px] border border-line-strong rounded-md hover:bg-elevated disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              >
-                {isPending ? '…' : 'Mark done'}
-              </button>
-              {finishDisabledReason && (
-                <p className="text-[10px] text-ink-3 text-center">{finishDisabledReason}</p>
-              )}
-            </div>
-            {canBlock && (
-              <button
-                onClick={() => setShowBlockPanel(true)}
-                disabled={isPending}
-                className="h-9 px-3 bg-surface text-blocked-text text-[13px] border border-blocked-text/30 rounded-md hover:bg-blocked-bg disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                title="Report a blocker"
-              >
-                Block
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Block confirm */}
-      {showBlockPanel && selectedViewIds.length > 0 && (
-        <div className="flex gap-2 pt-1">
-          <button
-            onClick={handleBlock}
-            disabled={isPending || !blockReason}
-            className="flex-1 h-9 bg-blocked-bg text-blocked-text text-[13px] font-medium border border-blocked-text/30 rounded-md hover:bg-blocked-bg disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
-            {isPending ? '…' : 'Confirm block'}
-          </button>
-          <button
-            onClick={() => { setShowBlockPanel(false); setBlockReason('') }}
-            disabled={isPending}
-            className="h-9 px-3 bg-surface text-ink-2 text-[13px] border border-line rounded-md hover:bg-elevated transition-colors"
-          >
-            Cancel
-          </button>
+          {filteredViews.length === 0 && viewFilter !== 'all' && (
+            <p className="text-[11px] text-ink-3 text-center py-3">No views match this filter.</p>
+          )}
         </div>
       )}
 
@@ -608,11 +577,137 @@ export function WidgetClient({ projects, userId, userRole, hasError }: WidgetCli
           <div>project: {projectId || '—'}</div>
           <div>rounds: {viewRounds.length > 0 ? viewRounds.length : (roundLoading ? 'loading…' : '—')}</div>
           <div>stage:   {stage || '—'}</div>
+          <div>filter:  {viewFilter}</div>
           <div>views:   {selectedViewIds.length ? selectedViewIds.map(id => views.find(v => v.id === id)?.label ?? id).join(', ') : '—'}</div>
           <div>canStart: {String(canStart)} · canFinish: {String(canFinish)} · canBlock: {String(canBlock)}</div>
           {workflowError && <div className="text-blocked-text">workflow error: {workflowError}</div>}
-          {startDisabledReason && <div>start blocked: {startDisabledReason}</div>}
-          {finishDisabledReason && <div>finish blocked: {finishDisabledReason}</div>}
+        </div>
+      )}
+
+      {/* ── Sticky action bar ──────────────────────────────────────────────── */}
+      {barVisible && (
+        <div className="fixed bottom-0 left-0 right-0 z-50 pointer-events-none">
+          <div className="max-w-[460px] mx-auto px-6 pb-6 pointer-events-auto">
+            <div className="bg-elevated border border-line-strong rounded-xl shadow-2xl overflow-hidden">
+
+              {/* Bar header */}
+              <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-line">
+                <div className="flex items-center gap-2 text-[12px]">
+                  <span className="font-medium text-ink">
+                    {selectedViewIds.length} view{selectedViewIds.length > 1 ? 's' : ''}
+                  </span>
+                  {stage && (
+                    <>
+                      <span className="text-ink-3">·</span>
+                      <span className="text-ink-2">{STAGE_LABELS[stage as StageType]}</span>
+                    </>
+                  )}
+                </div>
+                <button
+                  onClick={clearSelection}
+                  className="text-[11px] text-ink-3 hover:text-ink-2 transition-colors px-1.5 py-0.5 rounded hover:bg-surface"
+                >
+                  Clear
+                </button>
+              </div>
+
+              <div className="px-4 py-3 space-y-3">
+                {/* Feedback */}
+                {feedback && (
+                  <p className={`text-[11px] ${feedback.ok ? 'text-done-text' : 'text-blocked-text'}`}>
+                    {feedback.msg}
+                  </p>
+                )}
+
+                {/* ETA row (normal mode) */}
+                {!showBlockPanel && (
+                  <div className="flex gap-2">
+                    <input
+                      type="date"
+                      value={etaDate}
+                      onChange={e => setEtaDate(e.target.value)}
+                      className="flex-1 px-2.5 py-1.5 bg-surface border border-line rounded-md text-[12px] text-ink focus:outline-none focus:border-accent transition-colors [color-scheme:dark]"
+                      placeholder="ETA date"
+                    />
+                    <select
+                      value={etaWindow}
+                      onChange={e => setEtaWindow(e.target.value as TimeWindow)}
+                      className="w-28 px-2.5 py-1.5 bg-surface border border-line rounded-md text-[12px] text-ink focus:outline-none focus:border-accent transition-colors"
+                    >
+                      <option value="">Time</option>
+                      {TIME_WINDOWS.map(w => <option key={w} value={w}>{w}</option>)}
+                    </select>
+                  </div>
+                )}
+
+                {/* Block reason (block mode) */}
+                {showBlockPanel && (
+                  <select
+                    value={blockReason}
+                    onChange={e => setBlockReason(e.target.value)}
+                    className="w-full px-2.5 py-1.5 bg-surface border border-blocked-text/30 rounded-md text-[12px] text-ink focus:outline-none focus:border-blocked-text transition-colors"
+                  >
+                    <option value="">Select reason…</option>
+                    {BLOCK_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                )}
+
+                {/* Disabled reason hint */}
+                {!showBlockPanel && !canStart && startDisabledReason && selectedViewIds.length > 0 && (
+                  <p className="text-[10px] text-ink-3">{startDisabledReason}</p>
+                )}
+                {!showBlockPanel && !canFinish && finishDisabledReason && selectedViewIds.length > 0 && (
+                  <p className="text-[10px] text-ink-3">{finishDisabledReason}</p>
+                )}
+
+                {/* Action buttons */}
+                {!showBlockPanel ? (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleStart}
+                      disabled={!canStart}
+                      className="flex-1 h-9 bg-accent text-canvas text-[13px] font-medium rounded-lg hover:bg-accent-dim disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {isPending ? '…' : 'Start'}
+                    </button>
+                    <button
+                      onClick={handleFinish}
+                      disabled={!canFinish}
+                      className="flex-1 h-9 bg-surface text-ink text-[13px] border border-line-strong rounded-lg hover:bg-canvas disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {isPending ? '…' : 'Mark done'}
+                    </button>
+                    {canBlock && (
+                      <button
+                        onClick={() => setShowBlockPanel(true)}
+                        disabled={isPending}
+                        className="h-9 px-3 bg-surface text-blocked-text text-[13px] border border-blocked-text/30 rounded-lg hover:bg-blocked-bg disabled:opacity-40 transition-colors"
+                      >
+                        Block
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleBlock}
+                      disabled={isPending || !blockReason}
+                      className="flex-1 h-9 bg-blocked-bg text-blocked-text text-[13px] font-medium border border-blocked-text/30 rounded-lg hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {isPending ? '…' : 'Confirm block'}
+                    </button>
+                    <button
+                      onClick={() => { setShowBlockPanel(false); setBlockReason('') }}
+                      disabled={isPending}
+                      className="h-9 px-3 bg-surface text-ink-2 text-[13px] border border-line rounded-lg hover:bg-canvas transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
