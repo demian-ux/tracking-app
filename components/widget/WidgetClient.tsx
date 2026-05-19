@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useTransition } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { startStage, finishStage, blockStage, ensureProjectWorkflow, undoStageAction } from '@/lib/actions/stages'
+import { startStage, finishStage, blockStage, ensureProjectWorkflow, undoStageAction, resetStage } from '@/lib/actions/stages'
 import type { StageType, TimeWindow } from '@/lib/types/database'
 import { STAGE_LABELS, STAGE_ORDER, TIME_WINDOWS, BLOCK_REASONS } from '@/lib/types/app'
 import { formatDelivery } from '@/lib/utils/formatting'
@@ -97,6 +97,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
 
   const [showBlockPanel, setShowBlockPanel] = useState(false)
   const [blockReason, setBlockReason] = useState('')
+  const [showResetConfirm, setShowResetConfirm] = useState(false)
   const [undoState, setUndoState] = useState<UndoState | null>(null)
 
   const project = projects.find(p => p.id === projectId) ?? null
@@ -177,6 +178,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
     setFeedback(null)
     setShowBlockPanel(false)
     setBlockReason('')
+    setShowResetConfirm(false)
     setEtaDate('')
     setEtaWindow('')
   }
@@ -297,6 +299,27 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
     return null
   })()
 
+  const canReset =
+    !isPending &&
+    viewRounds.length > 0 &&
+    !!stage &&
+    selectedViewIds.length > 0 &&
+    allSelectedHaveState &&
+    selectedStates.some(s => s.status !== 'not_started') &&
+    (isAdmin || selectedStates.some(s => s.assigned_user_id === userId))
+
+  // Stages later than selected that have non-not_started states in selected views
+  const cascadeStages = (() => {
+    if (!stage) return [] as typeof STAGE_ORDER
+    const idx = STAGE_ORDER.indexOf(stage as StageType)
+    return STAGE_ORDER.slice(idx + 1).filter(laterStage =>
+      selectedViewIds.some(viewId => {
+        const s = getState(viewId, laterStage)
+        return s && s.status !== 'not_started'
+      })
+    )
+  })()
+
   const progress = states.length > 0
     ? Math.round(states.filter(s => s.status === 'done').length / states.length * 100)
     : 0
@@ -355,6 +378,22 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
         clearSelection()
         await reloadStates()
         armUndo(`Marked ${count} view${count > 1 ? 's' : ''} done`, snapshot)
+      }
+    })
+  }
+
+  function handleReset() {
+    if (!canReset) return
+    setFeedback(null)
+    startTransition(async () => {
+      const result = await resetStage(projectId, selectedViewIds, stage as StageType)
+      if (result.error) {
+        setFeedback({ ok: false, msg: result.error })
+      } else {
+        setFeedback({ ok: true, msg: 'Stages reset.' })
+        setShowResetConfirm(false)
+        setSelectedViewIds([])
+        await reloadStates()
       }
     })
   }
@@ -691,7 +730,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                 )}
 
                 {/* ETA row (normal mode) */}
-                {!showBlockPanel && (
+                {!showBlockPanel && !showResetConfirm && (
                   <div className="flex gap-2">
                     <input
                       type="date"
@@ -724,41 +763,55 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                 )}
 
                 {/* Disabled reason hint */}
-                {!showBlockPanel && !canStart && startDisabledReason && selectedViewIds.length > 0 && (
+                {!showBlockPanel && !showResetConfirm && !canStart && startDisabledReason && selectedViewIds.length > 0 && (
                   <p className="text-[10px] text-ink-3">{startDisabledReason}</p>
                 )}
-                {!showBlockPanel && !canFinish && finishDisabledReason && selectedViewIds.length > 0 && (
+                {!showBlockPanel && !showResetConfirm && !canFinish && finishDisabledReason && selectedViewIds.length > 0 && (
                   <p className="text-[10px] text-ink-3">{finishDisabledReason}</p>
                 )}
 
                 {/* Action buttons */}
-                {!showBlockPanel ? (
-                  <div className="flex gap-2">
-                    <button
-                      onClick={handleStart}
-                      disabled={!canStart}
-                      className="flex-1 h-9 bg-accent text-canvas text-[13px] font-medium rounded-lg hover:bg-accent-dim disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                    >
-                      {isPending ? '…' : 'Start'}
-                    </button>
-                    <button
-                      onClick={handleFinish}
-                      disabled={!canFinish}
-                      className="flex-1 h-9 bg-surface text-ink text-[13px] border border-line-strong rounded-lg hover:bg-canvas disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                    >
-                      {isPending ? '…' : 'Mark done'}
-                    </button>
-                    {canBlock && (
+                {!showBlockPanel && !showResetConfirm && (
+                  <div className="space-y-2">
+                    <div className="flex gap-2">
                       <button
-                        onClick={() => setShowBlockPanel(true)}
-                        disabled={isPending}
-                        className="h-9 px-3 bg-surface text-blocked-text text-[13px] border border-blocked-text/30 rounded-lg hover:bg-blocked-bg disabled:opacity-40 transition-colors"
+                        onClick={handleStart}
+                        disabled={!canStart}
+                        className="flex-1 h-9 bg-accent text-canvas text-[13px] font-medium rounded-lg hover:bg-accent-dim disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                       >
-                        Block
+                        {isPending ? '…' : 'Start'}
+                      </button>
+                      <button
+                        onClick={handleFinish}
+                        disabled={!canFinish}
+                        className="flex-1 h-9 bg-surface text-ink text-[13px] border border-line-strong rounded-lg hover:bg-canvas disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {isPending ? '…' : 'Mark done'}
+                      </button>
+                      {canBlock && (
+                        <button
+                          onClick={() => setShowBlockPanel(true)}
+                          disabled={isPending}
+                          className="h-9 px-3 bg-surface text-blocked-text text-[13px] border border-blocked-text/30 rounded-lg hover:bg-blocked-bg disabled:opacity-40 transition-colors"
+                        >
+                          Block
+                        </button>
+                      )}
+                    </div>
+                    {canReset && (
+                      <button
+                        onClick={() => setShowResetConfirm(true)}
+                        disabled={isPending}
+                        className="w-full h-8 bg-surface text-ink-2 text-[12px] border border-line rounded-lg hover:border-line-strong hover:text-ink disabled:opacity-40 transition-colors"
+                      >
+                        ↺ Reset selected
                       </button>
                     )}
                   </div>
-                ) : (
+                )}
+
+                {/* Block confirm */}
+                {showBlockPanel && (
                   <div className="flex gap-2">
                     <button
                       onClick={handleBlock}
@@ -774,6 +827,36 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                     >
                       Cancel
                     </button>
+                  </div>
+                )}
+
+                {/* Reset confirm */}
+                {showResetConfirm && (
+                  <div className="space-y-2">
+                    <div className="text-[11px] text-ink-2">
+                      <p>Return selected stages to <span className="font-medium text-ink">Not started</span>.</p>
+                      {cascadeStages.length > 0 && (
+                        <p className="mt-1 text-warn-text">
+                          Will also reset: {cascadeStages.map(s => STAGE_LABELS[s]).join(', ')}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleReset}
+                        disabled={isPending}
+                        className="flex-1 h-9 bg-surface text-ink text-[13px] font-medium border border-line-strong rounded-lg hover:bg-elevated disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {isPending ? '…' : 'Reset stages'}
+                      </button>
+                      <button
+                        onClick={() => setShowResetConfirm(false)}
+                        disabled={isPending}
+                        className="h-9 px-3 bg-surface text-ink-2 text-[13px] border border-line rounded-lg hover:bg-canvas transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>

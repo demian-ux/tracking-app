@@ -487,3 +487,86 @@ export async function undoStageAction(
   revalidateProjectScreens(projectId)
   return { data: true }
 }
+
+export async function resetStage(
+  projectId: string,
+  viewIds: string[],
+  stage: StageType,
+) {
+  const auth = await requireWorker()
+  if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
+  const { user, profile, supabase } = auth.data
+
+  const { data: activeRounds } = await supabase
+    .from('project_view_rounds')
+    .select('id, project_view_id')
+    .eq('project_id', projectId)
+    .eq('status', 'active')
+    .in('project_view_id', viewIds)
+
+  if (!activeRounds || activeRounds.length !== viewIds.length) {
+    return { error: 'Could not find active round for all selected views' }
+  }
+
+  const roundIds = activeRounds.map(r => r.id)
+
+  // Cascade: reset the selected stage and all subsequent stages
+  const stageIdx = STAGE_ORDER.indexOf(stage)
+  const stagesToReset = STAGE_ORDER.slice(stageIdx)
+
+  const { data: currentStates } = await supabase
+    .from('view_stage_states')
+    .select('id, project_view_id, project_view_round_id, stage, status, assigned_user_id')
+    .in('project_view_round_id', roundIds)
+    .in('project_view_id', viewIds)
+    .in('stage', stagesToReset)
+
+  if (!currentStates) return { error: 'Could not fetch stage states' }
+
+  // Permission: admin can reset anything; team members can only reset stages assigned to them
+  if (profile.role !== 'admin') {
+    const primaryStates = currentStates.filter(s => s.stage === stage && s.status !== 'not_started')
+    const unauthorized = primaryStates.filter(s => s.assigned_user_id !== user.id)
+    if (unauthorized.length > 0) {
+      return { error: 'You can only reset stages assigned to you' }
+    }
+  }
+
+  const statesToReset = currentStates.filter(s => s.status !== 'not_started')
+
+  if (statesToReset.length === 0) {
+    return { error: 'All selected stages are already not started' }
+  }
+
+  const stateIds = statesToReset.map(s => s.id)
+
+  const { error: updateErr } = await supabase
+    .from('view_stage_states')
+    .update({
+      status: 'not_started' as StageStatus,
+      assigned_user_id: null,
+      started_at: null,
+      completed_at: null,
+      latest_eta_date: null,
+      latest_eta_time_window: null,
+      block_reason: null,
+      status_before_block: null,
+    })
+    .in('id', stateIds)
+
+  if (updateErr) return { error: updateErr.message }
+
+  await supabase.from('stage_events').insert(
+    statesToReset.map(s => ({
+      project_id: projectId,
+      project_view_round_id: s.project_view_round_id,
+      project_view_id: s.project_view_id,
+      stage: s.stage as StageType,
+      event_type: 'stage_reset' as const,
+      actor_id: user.id,
+    }))
+  )
+
+  revalidateProjectScreens(projectId)
+  return { data: { resetCount: statesToReset.length } }
+}

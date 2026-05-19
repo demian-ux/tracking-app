@@ -34,6 +34,7 @@ export type StageEventType =
   | 'stage_reopened'
   | 'stage_blocked'
   | 'stage_unblocked'
+  | 'stage_reset'
 export type ProjectEventType =
   | 'project_created'
   | 'delivery_date_changed'
