@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { ClientsClient } from '@/components/admin/ClientsClient'
+import { PageHead } from '@/components/ui/PageHead'
 import type { ClientStatus, ProjectStatus } from '@/lib/types/database'
 
 interface ClientRow {
@@ -48,9 +49,10 @@ export default async function ClientsPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-[15px] font-medium text-ink">Clients</h1>
-      </div>
+      <PageHead
+        title="Clients"
+        sub={clients.length > 0 ? `${clients.length} total` : undefined}
+      />
       <ClientsClient clients={clients} />
     </div>
   )

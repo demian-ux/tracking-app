@@ -1,6 +1,12 @@
 import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
-import { ProjectBadge, StageBadge } from '@/components/ui/Badge'
+import { Badge } from '@/components/ui/Badge'
+import { SectionLabel } from '@/components/ui/SectionLabel'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { PageHead } from '@/components/ui/PageHead'
+import { Icon } from '@/components/ui/Icon'
+import { Avatar } from '@/components/ui/Avatar'
+import { ButtonLink } from '@/components/ui/Button'
 import { formatDelivery, roundLabel } from '@/lib/utils/formatting'
 import { getTodayISOInTimeZone, getWeekEndISOInTimeZone } from '@/lib/utils/dates'
 import { STAGE_LABELS } from '@/lib/types/app'
@@ -28,32 +34,31 @@ interface StageSummary {
   users: { name: string } | null
 }
 
-function SectionHeader({ children, count }: { children: React.ReactNode; count: number }) {
-  return (
-    <div className="flex items-center gap-3 mb-3">
-      <span className="text-[10px] tracking-[0.18em] uppercase text-ink-3">{children}</span>
-      <span className="flex-1 border-t border-line" />
-      <span className="text-[10px] text-ink-3 tabular-nums">{count}</span>
-    </div>
-  )
-}
-
-function ProjectRow({ project, href, meta }: { project: ProjectSummary; href: string; meta?: React.ReactNode }) {
+function ProjectRow({
+  project,
+  href,
+  meta,
+}: {
+  project: ProjectSummary
+  href: string
+  meta?: React.ReactNode
+}) {
   return (
     <Link
       href={href}
-      className="flex items-center justify-between px-3 py-2.5 bg-surface border border-line rounded-md hover:border-line-strong hover:bg-elevated transition-colors"
+      className="flex items-center justify-between gap-4 px-4 py-3 bg-surface border border-line rounded-md hover:border-line-strong hover:bg-elevated transition-colors duration-100"
     >
       <div className="min-w-0">
-        <div className="text-[13px] text-ink truncate">
-          {project.clients?.name && (
-            <span className="text-ink-3">{project.clients.name} / </span>
-          )}
+        <div className="text-body text-ink truncate">
+          {project.clients?.name && <span className="text-ink-3">{project.clients.name} / </span>}
           {project.name}
         </div>
         {meta && <div className="mt-0.5">{meta}</div>}
       </div>
-      <ProjectBadge status={project.status} />
+      <div className="flex items-center gap-3 shrink-0">
+        <Badge status={project.status} dot />
+        <Icon name="arrow-right" size={12} className="text-ink-3" />
+      </div>
     </Link>
   )
 }
@@ -133,134 +138,169 @@ export default async function TodayPage() {
     revisionRows.length === 0
 
   return (
-    <div className="space-y-10">
-      <div className="flex items-baseline justify-between">
-        <h1 className="text-[15px] font-medium text-ink">Today</h1>
-        <span className="text-[11px] text-ink-3">{dateStr}</span>
-      </div>
+    <div>
+      <PageHead title="Today" sub={dateStr} />
 
-      {blockedRows.length > 0 && (
-        <section>
-          <SectionHeader count={blockedRows.length}>Blocked</SectionHeader>
-          <div className="space-y-1.5">
-            {blockedRows.map(s => (
-              <div key={s.id} className="flex items-center justify-between px-3 py-2.5 bg-blocked-bg border border-blocked-text/20 rounded-md">
-                <div className="min-w-0">
-                  <div className="text-[13px] text-ink truncate">
-                    {s.projects?.clients?.name && (
-                      <span className="text-ink-3">{s.projects.clients.name} / </span>
-                    )}
-                    {s.projects?.name}
-                    <span className="text-ink-3 mx-1.5">-</span>
-                    <span className="text-ink-2">{s.project_views?.label}</span>
-                    <span className="text-ink-3 mx-1.5">-</span>
-                    <span className="text-ink-2">{STAGE_LABELS[s.stage]}</span>
-                  </div>
-                  {s.block_reason && (
-                    <div className="text-[11px] text-blocked-text mt-0.5">{s.block_reason}</div>
-                  )}
-                </div>
-                <Link
-                  href={`/admin/projects/${s.projects?.id}`}
-                  className="ml-4 shrink-0 text-[11px] text-ink-3 hover:text-ink-2 transition-colors"
-                >
-                  Unblock -&gt;
-                </Link>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {stageRows.length > 0 && (
-        <section>
-          <SectionHeader count={stageRows.length}>Stages due today</SectionHeader>
-          <div className="bg-surface border border-line rounded-md overflow-hidden">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-line bg-elevated">
-                  <th className="text-left px-3 py-2 text-[10px] tracking-[0.12em] uppercase text-ink-3">Project</th>
-                  <th className="text-left px-3 py-2 text-[10px] tracking-[0.12em] uppercase text-ink-3">View</th>
-                  <th className="text-left px-3 py-2 text-[10px] tracking-[0.12em] uppercase text-ink-3">Stage</th>
-                  <th className="text-left px-3 py-2 text-[10px] tracking-[0.12em] uppercase text-ink-3">ETA</th>
-                  <th className="text-left px-3 py-2 text-[10px] tracking-[0.12em] uppercase text-ink-3">Who</th>
-                </tr>
-              </thead>
-              <tbody>
-                {stageRows.map((s, i) => (
-                  <tr key={s.id} className={i > 0 ? 'border-t border-line' : ''}>
-                    <td className="px-3 py-2.5">
-                      <Link href={`/admin/projects/${s.projects?.id}`} className="text-[12px] text-ink hover:text-accent transition-colors">
+      {isEmpty ? (
+        <EmptyState
+          icon="check"
+          title="All clear."
+          sub="Nothing blocked, due, or waiting. Enjoy the quiet."
+        />
+      ) : (
+        <div className="space-y-8">
+          {blockedRows.length > 0 && (
+            <section>
+              <SectionLabel count={blockedRows.length}>Blocked</SectionLabel>
+              <div className="space-y-2">
+                {blockedRows.map(s => (
+                  <div
+                    key={s.id}
+                    className="flex items-center justify-between gap-3 px-4 py-3 bg-blocked-bg border border-blocked-text/20 rounded-md"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-body text-ink truncate">
+                        {s.projects?.clients?.name && (
+                          <span className="text-ink-3">{s.projects.clients.name} / </span>
+                        )}
                         {s.projects?.name}
-                      </Link>
-                    </td>
-                    <td className="px-3 py-2.5 text-[12px] text-ink-2">{s.project_views?.label}</td>
-                    <td className="px-3 py-2.5">
-                      <StageBadge status={s.status} />
-                      <span className="ml-1.5 text-[11px] text-ink-3">{STAGE_LABELS[s.stage]}</span>
-                    </td>
-                    <td className="px-3 py-2.5 text-[11px] text-ink-2 tabular-nums">
-                      {formatDelivery(s.latest_eta_date ?? null, s.latest_eta_time_window ?? null)}
-                    </td>
-                    <td className="px-3 py-2.5 text-[11px] text-ink-3">{s.users?.name ?? '-'}</td>
-                  </tr>
+                        <span className="text-ink-faint mx-1.5">·</span>
+                        <span className="text-ink-2">{s.project_views?.label}</span>
+                        <span className="text-ink-faint mx-1.5">·</span>
+                        <span className="text-ink-2">{STAGE_LABELS[s.stage]}</span>
+                      </div>
+                      {s.block_reason && (
+                        <div className="text-caption text-blocked-text mt-0.5">{s.block_reason}</div>
+                      )}
+                    </div>
+                    <ButtonLink
+                      href={`/admin/projects/${s.projects?.id}`}
+                      variant="ghost"
+                      size="sm"
+                      rightIcon="arrow-right"
+                      className="shrink-0"
+                    >
+                      Unblock
+                    </ButtonLink>
+                  </div>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
+              </div>
+            </section>
+          )}
 
-      {dueSoonRows.length > 0 && (
-        <section>
-          <SectionHeader count={dueSoonRows.length}>Due this week</SectionHeader>
-          <div className="space-y-1.5">
-            {dueSoonRows.map(p => (
-              <ProjectRow
-                key={p.id}
-                project={p}
-                href={`/admin/projects/${p.id}`}
-                meta={<span className="text-[11px] text-ink-3">{formatDelivery(p.delivery_date, p.delivery_time_window)}</span>}
-              />
-            ))}
-          </div>
-        </section>
-      )}
+          {stageRows.length > 0 && (
+            <section>
+              <SectionLabel count={stageRows.length}>Stages due today</SectionLabel>
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Project</th>
+                      <th>View</th>
+                      <th>Stage</th>
+                      <th>ETA</th>
+                      <th>Owner</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stageRows.map(s => (
+                      <tr key={s.id}>
+                        <td className="primary">
+                          <Link
+                            href={`/admin/projects/${s.projects?.id}`}
+                            className="hover:text-accent transition-colors"
+                          >
+                            {s.projects?.name}
+                          </Link>
+                        </td>
+                        <td>{s.project_views?.label}</td>
+                        <td>
+                          <span className="inline-flex items-center gap-2">
+                            <Badge status={s.status} />
+                            <span className="text-ink-3">{STAGE_LABELS[s.stage]}</span>
+                          </span>
+                        </td>
+                        <td className="tabular-nums">
+                          {formatDelivery(s.latest_eta_date ?? null, s.latest_eta_time_window ?? null)}
+                        </td>
+                        <td>
+                          {s.users?.name ? (
+                            <span className="inline-flex items-center gap-2">
+                              <Avatar name={s.users.name} size={18} />
+                              {s.users.name}
+                            </span>
+                          ) : (
+                            <span className="text-ink-faint">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
 
-      {feedbackRows.length > 0 && (
-        <section>
-          <SectionHeader count={feedbackRows.length}>Waiting for feedback</SectionHeader>
-          <div className="space-y-1.5">
-            {feedbackRows.map(p => (
-              <ProjectRow
-                key={p.id}
-                project={p}
-                href={`/admin/projects/${p.id}`}
-                meta={<span className="text-[11px] text-ink-3">{formatDelivery(p.delivery_date, p.delivery_time_window)}</span>}
-              />
-            ))}
-          </div>
-        </section>
-      )}
+          {dueSoonRows.length > 0 && (
+            <section>
+              <SectionLabel count={dueSoonRows.length}>Due this week</SectionLabel>
+              <div className="space-y-2">
+                {dueSoonRows.map(p => (
+                  <ProjectRow
+                    key={p.id}
+                    project={p}
+                    href={`/admin/projects/${p.id}`}
+                    meta={
+                      <span className="text-caption text-ink-2 tabular-nums">
+                        {formatDelivery(p.delivery_date, p.delivery_time_window)}
+                      </span>
+                    }
+                  />
+                ))}
+              </div>
+            </section>
+          )}
 
-      {revisionRows.length > 0 && (
-        <section>
-          <SectionHeader count={revisionRows.length}>Active revisions</SectionHeader>
-          <div className="space-y-1.5">
-            {revisionRows.map(p => (
-              <ProjectRow
-                key={p.id}
-                project={p}
-                href={`/admin/projects/${p.id}`}
-                meta={<span className="text-[11px] text-ink-3">{roundLabel(p.current_round_number ?? 0)}</span>}
-              />
-            ))}
-          </div>
-        </section>
-      )}
+          {feedbackRows.length > 0 && (
+            <section>
+              <SectionLabel count={feedbackRows.length}>Waiting for feedback</SectionLabel>
+              <div className="space-y-2">
+                {feedbackRows.map(p => (
+                  <ProjectRow
+                    key={p.id}
+                    project={p}
+                    href={`/admin/projects/${p.id}`}
+                    meta={
+                      <span className="text-caption text-ink-2">
+                        {formatDelivery(p.delivery_date, p.delivery_time_window)}
+                      </span>
+                    }
+                  />
+                ))}
+              </div>
+            </section>
+          )}
 
-      {isEmpty && (
-        <div className="text-center py-20 text-ink-3 text-[13px]">All clear.</div>
+          {revisionRows.length > 0 && (
+            <section>
+              <SectionLabel count={revisionRows.length}>Active revisions</SectionLabel>
+              <div className="space-y-2">
+                {revisionRows.map(p => (
+                  <ProjectRow
+                    key={p.id}
+                    project={p}
+                    href={`/admin/projects/${p.id}`}
+                    meta={
+                      <span className="text-caption text-ink-2">
+                        {roundLabel(p.current_round_number ?? 0)}
+                      </span>
+                    }
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
       )}
     </div>
   )

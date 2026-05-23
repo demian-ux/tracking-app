@@ -10,6 +10,13 @@ import type { TimeWindow, StageType } from '@/lib/types/database'
 import { TIME_WINDOWS, roundLabel, STAGE_LABELS, ACTIVE_PROJECT_STATUSES, PROJECT_STATUS_LABELS } from '@/lib/types/app'
 import { formatDelivery } from '@/lib/utils/formatting'
 import { ProgressBar } from '@/components/ui/ProgressBar'
+import { Badge } from '@/components/ui/Badge'
+import { Button } from '@/components/ui/Button'
+import { Card } from '@/components/ui/Card'
+import { SectionLabel } from '@/components/ui/SectionLabel'
+import { FilterChip } from '@/components/ui/FilterChip'
+import { Icon } from '@/components/ui/Icon'
+import { Input, Select } from '@/components/ui/Input'
 
 interface ViewStageStateWithUser {
   id: string
@@ -36,17 +43,55 @@ interface Props {
   progress: number
 }
 
-const inputClass = 'w-full px-2.5 py-2 bg-canvas border border-line rounded-md text-[13px] text-ink focus:outline-none focus:border-accent transition-colors [color-scheme:dark]'
+type Editing = 'delivery' | 'status' | 'views' | null
+
+function InfoCell({
+  label,
+  children,
+  sub,
+  onClick,
+  active,
+}: {
+  label: string
+  children: React.ReactNode
+  sub?: React.ReactNode
+  onClick?: () => void
+  active?: boolean
+}) {
+  const cls = [
+    'group flex flex-col gap-1.5 p-3 text-left border-l border-line first:border-l-0 transition-colors duration-100',
+    onClick ? 'cursor-pointer hover:bg-elevated' : '',
+    active ? 'bg-elevated' : '',
+  ].filter(Boolean).join(' ')
+
+  const inner = (
+    <>
+      <span className="flex items-center gap-1 text-label font-semibold uppercase text-ink-3">
+        {label}
+        {onClick && (
+          <Icon name="pencil" size={10} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+        )}
+      </span>
+      <span className="flex items-center gap-2 text-heading font-medium text-ink min-h-6">{children}</span>
+      {sub && <span className="text-caption text-ink-2">{sub}</span>}
+    </>
+  )
+
+  return onClick ? (
+    <button type="button" onClick={onClick} className={cls}>{inner}</button>
+  ) : (
+    <div className={cls}>{inner}</div>
+  )
+}
 
 export function ProjectDetailClient({ project, viewRounds, stageStates, views, progress }: Props) {
   const [isPending, startTransition] = useTransition()
   const [feedback, setFeedback] = useState<string | null>(null)
   const [confirmDelivery, setConfirmDelivery] = useState(false)
 
-  const [editingDate, setEditingDate] = useState(false)
+  const [editing, setEditing] = useState<Editing>(null)
   const [deliveryDate, setDeliveryDate] = useState(project.delivery_date ?? '')
   const [deliveryWindow, setDeliveryWindow] = useState<TimeWindow | ''>(project.delivery_time_window ?? '')
-
   const [newViewCount, setNewViewCount] = useState(project.view_count)
 
   const [viewsToDeliver, setViewsToDeliver] = useState<string[]>([])
@@ -107,7 +152,7 @@ export function ProjectDetailClient({ project, viewRounds, stageStates, views, p
         deliveryTimeWindow: (deliveryWindow || null) as TimeWindow | null,
       })
       if (result.error) setFeedback(result.error)
-      else setEditingDate(false)
+      else setEditing(null)
     })
   }
 
@@ -136,277 +181,259 @@ export function ProjectDetailClient({ project, viewRounds, stageStates, views, p
 
   const getViewLabel = (viewId: string) => views.find(v => v.id === viewId)?.label ?? '—'
 
+  function toggleEditing(which: Exclude<Editing, null>) {
+    setEditing(prev => (prev === which ? null : which))
+  }
+
   return (
     <div className="space-y-3">
-
-      {/* Blocked stages */}
-      {blockedStates.length > 0 && (
-        <div className="bg-surface border border-blocked-text/20 rounded-md p-4">
-          <h3 className="text-[10px] tracking-[0.12em] uppercase text-blocked-text mb-3">
-            Blocked ({blockedStates.length})
-          </h3>
-          <div className="space-y-2">
-            {blockedStates.map(state => (
-              <div key={state.id} className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <span className="text-[12px] text-ink-2">{getViewLabel(state.project_view_id)}</span>
-                  <span className="text-ink-3 mx-1.5">·</span>
-                  <span className="text-[12px] text-ink-2">{STAGE_LABELS[state.stage]}</span>
-                  {state.block_reason && (
-                    <span className="ml-1.5 text-[11px] text-blocked-text">— {state.block_reason}</span>
-                  )}
-                </div>
-                <button
-                  onClick={() => handleUnblock(state)}
-                  disabled={isPending}
-                  className="shrink-0 px-2.5 py-1 text-[11px] text-ink-2 border border-line-strong rounded hover:bg-elevated disabled:opacity-40 transition-colors"
-                >
-                  Unblock
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Row 1: Delivery + Progress */}
-      <div className="grid grid-cols-2 gap-3">
-        <div className="bg-surface border border-line rounded-md p-4">
-          <div className="text-[10px] tracking-[0.12em] uppercase text-ink-3 mb-2">Delivery</div>
-          {editingDate ? (
-            <div className="space-y-2">
-              <input
-                type="date"
-                value={deliveryDate}
-                onChange={e => setDeliveryDate(e.target.value)}
-                className={inputClass}
-              />
-              <select
-                value={deliveryWindow}
-                onChange={e => setDeliveryWindow(e.target.value as TimeWindow)}
-                className={inputClass}
-              >
-                <option value="">No window</option>
-                {TIME_WINDOWS.map(w => <option key={w} value={w}>{w}</option>)}
-              </select>
-              <div className="flex gap-2">
-                <button
-                  onClick={handleSaveDates}
-                  disabled={isPending}
-                  className="flex-1 py-1.5 bg-accent text-canvas text-[12px] font-medium rounded-md hover:bg-accent-dim disabled:opacity-40 transition-colors"
-                >
-                  Save
-                </button>
-                <button
-                  onClick={() => {
-                    setEditingDate(false)
-                    setDeliveryDate(project.delivery_date ?? '')
-                    setDeliveryWindow(project.delivery_time_window ?? '')
-                  }}
-                  className="px-3 py-1.5 text-[12px] text-ink-3 hover:text-ink-2 transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button
-              onClick={() => setEditingDate(true)}
-              className="text-[13px] text-ink text-left hover:text-accent transition-colors"
-            >
-              {formatDelivery(project.delivery_date, project.delivery_time_window)}
-            </button>
-          )}
-        </div>
-
-        <div className="bg-surface border border-line rounded-md p-4">
-          <div className="text-[10px] tracking-[0.12em] uppercase text-ink-3 mb-3">Progress</div>
-          <ProgressBar value={progress} />
-        </div>
+      {/* Horizontal info bar — replaces the unbalanced 4-card grid */}
+      <div className="grid grid-cols-4 bg-surface border border-line rounded-md overflow-hidden">
+        <InfoCell label="Delivery" active={editing === 'delivery'} onClick={() => toggleEditing('delivery')}>
+          <span className="tabular-nums">
+            {formatDelivery(project.delivery_date, project.delivery_time_window)}
+          </span>
+        </InfoCell>
+        <InfoCell
+          label="Progress"
+          sub={<ProgressBar value={progress} showPct={false} tone={progress === 100 ? 'done' : 'accent'} />}
+        >
+          <span className="tabular-nums">{progress}%</span>
+        </InfoCell>
+        <InfoCell label="Status" active={editing === 'status'} onClick={() => toggleEditing('status')}>
+          <Badge status={project.status} dot />
+        </InfoCell>
+        <InfoCell label="Views" active={editing === 'views'} onClick={() => toggleEditing('views')}>
+          <span className="tabular-nums">{project.view_count}</span>
+        </InfoCell>
       </div>
 
-      {/* Row 2: Status + Views */}
-      <div className="grid grid-cols-2 gap-3">
-        <div className="bg-surface border border-line rounded-md p-4">
-          <div className="text-[10px] tracking-[0.12em] uppercase text-ink-3 mb-3">Status</div>
-          <div className="flex flex-col gap-1">
+      {/* Inline editors — appear under the bar for the active field */}
+      {editing === 'delivery' && (
+        <Card>
+          <div className="flex items-end gap-2 flex-wrap">
+            <div className="flex-1 min-w-[140px]">
+              <label className="block text-label font-semibold uppercase text-ink-3 mb-1.5">Delivery date</label>
+              <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} />
+            </div>
+            <div className="flex-1 min-w-[120px]">
+              <label className="block text-label font-semibold uppercase text-ink-3 mb-1.5">Window</label>
+              <Select value={deliveryWindow} onChange={e => setDeliveryWindow(e.target.value as TimeWindow)}>
+                <option value="">No window</option>
+                {TIME_WINDOWS.map(w => <option key={w} value={w}>{w}</option>)}
+              </Select>
+            </div>
+            <Button variant="primary" onClick={handleSaveDates} loading={isPending}>Save</Button>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setEditing(null)
+                setDeliveryDate(project.delivery_date ?? '')
+                setDeliveryWindow(project.delivery_time_window ?? '')
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {editing === 'status' && (
+        <Card>
+          <div className="flex flex-wrap gap-2">
             {ACTIVE_PROJECT_STATUSES.map(s => (
-              <button
-                key={s}
-                onClick={() => handleSetStatus(s)}
-                disabled={isPending}
-                className={[
-                  'px-2.5 py-1.5 text-[11px] rounded-md border text-left transition-colors',
-                  s === project.status
-                    ? 'bg-accent/10 border-accent/30 text-accent font-medium'
-                    : 'border-transparent text-ink-3 hover:bg-elevated hover:text-ink-2',
-                ].join(' ')}
-              >
+              <FilterChip key={s} active={s === project.status} onClick={() => handleSetStatus(s)}>
                 {PROJECT_STATUS_LABELS[s]}
-              </button>
+              </FilterChip>
             ))}
           </div>
-        </div>
+        </Card>
+      )}
 
-        <div className="bg-surface border border-line rounded-md p-4">
-          <div className="text-[10px] tracking-[0.12em] uppercase text-ink-3 mb-3">Views</div>
+      {editing === 'views' && (
+        <Card>
           <div className="flex items-center gap-3">
             <button
+              type="button"
               onClick={() => setNewViewCount(v => Math.max(1, v - 1))}
               disabled={isPending || newViewCount <= 1}
-              className="w-8 h-8 flex items-center justify-center rounded-md border border-line text-ink-2 text-[16px] hover:border-line-strong hover:text-ink disabled:opacity-30 transition-colors select-none"
+              className="w-8 h-8 flex items-center justify-center rounded-sm border border-line-strong text-ink-2 hover:text-ink hover:border-ink-3 disabled:opacity-30 transition-colors select-none"
             >
               −
             </button>
-            <span className="text-[22px] font-medium text-ink tabular-nums w-8 text-center leading-none">
+            <span className="text-display font-semibold text-ink tabular-nums w-8 text-center">
               {newViewCount}
             </span>
             <button
+              type="button"
               onClick={() => setNewViewCount(v => v + 1)}
               disabled={isPending}
-              className="w-8 h-8 flex items-center justify-center rounded-md border border-line text-ink-2 text-[16px] hover:border-line-strong hover:text-ink disabled:opacity-30 transition-colors select-none"
+              className="w-8 h-8 flex items-center justify-center rounded-sm border border-line-strong text-ink-2 hover:text-ink hover:border-ink-3 disabled:opacity-30 transition-colors select-none"
             >
               +
             </button>
-          </div>
-          {newViewCount !== project.view_count && (
-            <div className="mt-3 flex gap-2">
-              <button
-                onClick={handleSaveViewCount}
-                disabled={isPending}
-                className="flex-1 py-1.5 bg-accent text-canvas text-[12px] font-medium rounded-md hover:bg-accent-dim disabled:opacity-40 transition-colors"
-              >
-                Apply
-              </button>
-              <button
-                onClick={() => setNewViewCount(project.view_count)}
-                disabled={isPending}
-                className="px-3 py-1.5 text-[12px] text-ink-3 hover:text-ink-2 transition-colors"
-              >
-                Reset
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Delivery panel */}
-      <div className="bg-surface border border-line rounded-md p-4">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-[10px] tracking-[0.12em] uppercase text-ink-3">Delivery</h3>
-          {viewsToDeliver.length > 0 && (
-            <span className="text-[10px] text-ink-2">{viewsToDeliver.length} selected</span>
-          )}
-        </div>
-
-        {activeRounds.length > 0 && (
-          <div className="mb-3 space-y-1.5">
-            {viewReadiness.map(({ view, ready, incomplete }) => (
-              <label key={view.id} className="flex items-start gap-2.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={viewsToDeliver.includes(view.id)}
-                  onChange={() => toggleViewToDeliver(view.id)}
-                  disabled={!ready || isPending}
-                  className="mt-0.5 shrink-0"
-                />
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[12px] text-ink-2">{view.label}</span>
-                    <span className={`text-[10px] font-medium ${ready ? 'text-done-text' : 'text-warn-text'}`}>
-                      {ready ? 'Ready' : `${incomplete.length} incomplete`}
-                    </span>
-                  </div>
-                  {!ready && incomplete.length > 0 && incomplete.length <= 3 && (
-                    <div className="text-[10px] text-ink-3">
-                      {incomplete.map(i => `${i.stageLabel} (${i.status})`).join(', ')}
-                    </div>
-                  )}
-                </div>
-              </label>
-            ))}
-          </div>
-        )}
-
-        <div className="flex flex-wrap gap-2">
-          {activeRounds.length > 0 && !confirmDelivery && (
-            <button
-              onClick={() => setConfirmDelivery(true)}
-              disabled={isPending || viewsToDeliver.length === 0}
-              className="px-3 py-1.5 bg-surface text-ink text-[12px] border border-line-strong rounded-md hover:bg-elevated disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              Mark delivery sent
-            </button>
-          )}
-          {confirmDelivery && (
-            <div className="flex items-center gap-2">
-              <span className="text-[12px] text-ink-2">
-                Confirm {viewsToDeliver.length} view{viewsToDeliver.length > 1 ? 's' : ''} delivered?
-              </span>
-              <button
-                onClick={handleMarkDelivery}
-                disabled={isPending}
-                className="px-3 py-1.5 bg-accent text-canvas text-[12px] font-medium rounded-md hover:bg-accent-dim disabled:opacity-40 transition-colors"
-              >
-                Confirm
-              </button>
-              <button
-                onClick={() => setConfirmDelivery(false)}
-                className="px-3 py-1.5 text-[12px] text-ink-3 hover:text-ink-2 transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Revision panel */}
-      {(project.status === 'waiting_for_feedback' || project.status === 'delivered') && deliveredViews.length > 0 && (
-        <div className="bg-surface border border-line rounded-md p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-[10px] tracking-[0.12em] uppercase text-ink-3">Revision</h3>
-            {viewsToRevise.length > 0 && (
-              <span className="text-[10px] text-ink-2">{viewsToRevise.length} selected</span>
+            {newViewCount !== project.view_count && (
+              <div className="flex gap-2 ml-2">
+                <Button variant="primary" size="sm" onClick={handleSaveViewCount} loading={isPending}>
+                  Apply
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setNewViewCount(project.view_count)}>
+                  Reset
+                </Button>
+              </div>
             )}
           </div>
+        </Card>
+      )}
 
-          <div className="mb-3 space-y-1.5">
-            {deliveredViews.map(view => {
-              const latestRound = viewRounds
-                .filter(r => r.project_view_id === view.id)
-                .sort((a, b) => b.round_number - a.round_number)[0]
-              return (
-                <label key={view.id} className="flex items-center gap-2.5 cursor-pointer">
+      {/* Blocked stages */}
+      {blockedStates.length > 0 && (
+        <section className="pt-3">
+          <SectionLabel count={blockedStates.length}>Blocked stages</SectionLabel>
+          <div className="space-y-2">
+            {blockedStates.map(state => (
+              <div
+                key={state.id}
+                className="flex items-center justify-between gap-3 px-4 py-3 bg-blocked-bg border border-blocked-text/20 rounded-md"
+              >
+                <div className="min-w-0">
+                  <div className="text-body text-ink">
+                    {getViewLabel(state.project_view_id)}
+                    <span className="text-ink-faint mx-1.5">·</span>
+                    <span className="text-ink-2">{STAGE_LABELS[state.stage]}</span>
+                  </div>
+                  {state.block_reason && (
+                    <div className="text-caption text-blocked-text mt-0.5">{state.block_reason}</div>
+                  )}
+                </div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => handleUnblock(state)}
+                  disabled={isPending}
+                  className="shrink-0"
+                >
+                  Unblock
+                </Button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Send delivery */}
+      <section className="pt-3">
+        <SectionLabel
+          action={
+            viewsToDeliver.length > 0
+              ? <span className="text-caption text-ink-2">{viewsToDeliver.length} selected</span>
+              : undefined
+          }
+        >
+          Send delivery
+        </SectionLabel>
+        <Card>
+          {activeRounds.length > 0 && (
+            <div className="space-y-2 mb-3">
+              {viewReadiness.map(({ view, ready, incomplete }) => (
+                <label key={view.id} className="flex items-start gap-2.5 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={viewsToRevise.includes(view.id)}
-                    onChange={() => toggleViewToRevise(view.id)}
-                    disabled={isPending}
-                    className="shrink-0"
+                    checked={viewsToDeliver.includes(view.id)}
+                    onChange={() => toggleViewToDeliver(view.id)}
+                    disabled={!ready || isPending}
+                    className="mt-0.5 shrink-0 accent-accent"
                   />
-                  <span className="text-[12px] text-ink-2">{view.label}</span>
-                  {latestRound && (
-                    <span className="text-[10px] text-ink-3">{roundLabel(latestRound.round_number)} delivered</span>
-                  )}
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-ink">{view.label}</span>
+                      <span className={`text-caption font-medium ${ready ? 'text-done-text' : 'text-warn-text'}`}>
+                        {ready ? 'Ready' : `${incomplete.length} incomplete`}
+                      </span>
+                    </div>
+                    {!ready && incomplete.length > 0 && incomplete.length <= 3 && (
+                      <div className="text-caption text-ink-3">
+                        {incomplete.map(i => `${i.stageLabel} (${i.status})`).join(', ')}
+                      </div>
+                    )}
+                  </div>
                 </label>
-              )
-            })}
-          </div>
+              ))}
+            </div>
+          )}
 
-          <button
-            onClick={handleCreateRevision}
-            disabled={isPending || viewsToRevise.length === 0}
-            className="px-3 py-1.5 bg-surface text-ink text-[12px] border border-line-strong rounded-md hover:bg-elevated disabled:opacity-40 transition-colors"
+          {activeRounds.length > 0 && !confirmDelivery && (
+            <Button
+              variant="primary"
+              leftIcon="send"
+              onClick={() => setConfirmDelivery(true)}
+              disabled={isPending || viewsToDeliver.length === 0}
+            >
+              Mark delivery sent
+            </Button>
+          )}
+          {confirmDelivery && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm text-ink-2">
+                Confirm {viewsToDeliver.length} view{viewsToDeliver.length > 1 ? 's' : ''} delivered?
+              </span>
+              <Button variant="primary" onClick={handleMarkDelivery} loading={isPending}>Confirm</Button>
+              <Button variant="ghost" onClick={() => setConfirmDelivery(false)}>Cancel</Button>
+            </div>
+          )}
+        </Card>
+      </section>
+
+      {/* Revision */}
+      {(project.status === 'waiting_for_feedback' || project.status === 'delivered') && deliveredViews.length > 0 && (
+        <section className="pt-3">
+          <SectionLabel
+            action={
+              viewsToRevise.length > 0
+                ? <span className="text-caption text-ink-2">{viewsToRevise.length} selected</span>
+                : undefined
+            }
           >
-            Create revision round
-          </button>
-        </div>
+            Revision
+          </SectionLabel>
+          <Card>
+            <div className="space-y-2 mb-3">
+              {deliveredViews.map(view => {
+                const latestRound = viewRounds
+                  .filter(r => r.project_view_id === view.id)
+                  .sort((a, b) => b.round_number - a.round_number)[0]
+                return (
+                  <label key={view.id} className="flex items-center gap-2.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={viewsToRevise.includes(view.id)}
+                      onChange={() => toggleViewToRevise(view.id)}
+                      disabled={isPending}
+                      className="shrink-0 accent-accent"
+                    />
+                    <span className="text-sm text-ink">{view.label}</span>
+                    {latestRound && (
+                      <span className="text-caption text-ink-3">
+                        {roundLabel(latestRound.round_number)} delivered
+                      </span>
+                    )}
+                  </label>
+                )
+              })}
+            </div>
+            <Button
+              variant="secondary"
+              leftIcon="rotate"
+              onClick={handleCreateRevision}
+              disabled={isPending || viewsToRevise.length === 0}
+            >
+              Create revision round
+            </Button>
+          </Card>
+        </section>
       )}
 
-      {feedback && (
-        <p className="text-[12px] text-ink-2 pt-1">{feedback}</p>
-      )}
+      {feedback && <p className="text-caption text-ink-2 pt-1">{feedback}</p>}
     </div>
   )
 }

@@ -1,7 +1,10 @@
 import { createClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
-import { ProjectBadge, StageBadge } from '@/components/ui/Badge'
+import { Badge } from '@/components/ui/Badge'
+import { Icon } from '@/components/ui/Icon'
+import { SectionLabel } from '@/components/ui/SectionLabel'
+import { PageHead } from '@/components/ui/PageHead'
 import { calculateProgress } from '@/lib/utils/progress'
 import { formatDelivery, roundLabel } from '@/lib/utils/formatting'
 import { ProjectDetailClient } from '@/components/admin/ProjectDetailClient'
@@ -49,38 +52,25 @@ export default async function ProjectDetailPage({ params }: Props) {
   const progress = calculateProgress(stageStates ?? [])
 
   return (
-    <div className="space-y-8">
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="flex items-center gap-2 mb-1.5">
-            {project.clients && (
-              <span className="text-[13px] text-ink-3">{project.clients.name} /</span>
-            )}
-            <h1 className="text-[15px] font-medium text-ink">{project.name}</h1>
-          </div>
-          <div className="flex items-center gap-2 text-[11px] text-ink-2">
-            <ProjectBadge status={project.status} />
-            <span className="text-ink-3">-</span>
-            <span>{roundLabel(project.current_round_number)}</span>
-            <span className="text-ink-3">-</span>
-            <span>{project.view_count} views</span>
-            <span className="text-ink-3">-</span>
-            <span>{project.delivery_count} deliveries</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <Link href="/admin/projects" className="text-[12px] text-ink-3 hover:text-ink-2 transition-colors">
-            &lt;- Back
-          </Link>
-        </div>
-      </div>
+    <div>
+      <Link
+        href="/admin/projects"
+        className="inline-flex items-center gap-1.5 text-caption text-ink-2 hover:text-ink mb-3 transition-colors"
+      >
+        <Icon name="arrow-left" size={12} />
+        Projects
+      </Link>
 
-      <ProjectCleanupActions
-        projectId={project.id}
-        projectName={project.name}
-        viewCount={project.view_count}
-        afterDeleteHref="/admin/projects"
-        prominent
+      <PageHead
+        title={
+          <>
+            {project.clients && (
+              <span className="font-normal text-ink-3">{project.clients.name} / </span>
+            )}
+            {project.name}
+          </>
+        }
+        sub={`${roundLabel(project.current_round_number)} · ${project.view_count} views · ${project.delivery_count} ${project.delivery_count === 1 ? 'delivery' : 'deliveries'}`}
       />
 
       <ProjectDetailClient
@@ -92,37 +82,29 @@ export default async function ProjectDetailPage({ params }: Props) {
       />
 
       {views && views.length > 0 && (
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-[11px] tracking-[0.12em] uppercase text-ink-3">
-              View stages
-            </h2>
-          </div>
-
-          <div className="bg-surface border border-line rounded-md overflow-hidden">
-            <table className="w-full">
+        <section className="mt-8">
+          <SectionLabel count={views.length}>View stages</SectionLabel>
+          <div className="table-wrap">
+            <table className="table">
               <thead>
-                <tr className="border-b border-line">
-                  <th className="text-left px-4 py-2.5 text-[10px] tracking-[0.12em] uppercase text-ink-3 w-24">View</th>
+                <tr>
+                  <th>View</th>
                   {STAGE_ORDER.map(stage => (
-                    <th key={stage} className="text-left px-4 py-2.5 text-[10px] tracking-[0.12em] uppercase text-ink-3">
-                      {STAGE_LABELS[stage]}
-                    </th>
+                    <th key={stage}>{STAGE_LABELS[stage]}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {views.map((view, i) => {
-                  // Find the active round for this view
+                {views.map(view => {
                   const activeRound = (viewRounds ?? []).find(
                     r => r.project_view_id === view.id && r.status === 'active'
                   )
                   return (
-                    <tr key={view.id} className={i > 0 ? 'border-t border-line' : ''}>
-                      <td className="px-4 py-2.5">
-                        <div className="text-[12px] font-medium text-ink-2">{view.label}</div>
+                    <tr key={view.id}>
+                      <td className="primary">
+                        <div>{view.label}</div>
                         {activeRound && (
-                          <div className="text-[10px] text-ink-3">{roundLabel(activeRound.round_number)}</div>
+                          <div className="text-caption text-ink-3">{roundLabel(activeRound.round_number)}</div>
                         )}
                       </td>
                       {STAGE_ORDER.map(stage => {
@@ -130,24 +112,24 @@ export default async function ProjectDetailPage({ params }: Props) {
                           s => s.project_view_id === view.id && s.stage === stage
                         )
                         return (
-                          <td key={stage} className="px-4 py-2.5">
+                          <td key={stage}>
                             {state ? (
-                              <div>
-                                <StageBadge status={state.status} />
+                              <div className="flex flex-col items-start gap-1">
+                                <Badge status={state.status} />
                                 {state.status === 'blocked' && state.block_reason && (
-                                  <div className="text-[10px] text-blocked-text mt-0.5">{state.block_reason}</div>
+                                  <span className="text-caption text-blocked-text">{state.block_reason}</span>
                                 )}
                                 {state.users?.name && state.status !== 'done' && state.status !== 'not_started' && (
-                                  <div className="text-[10px] text-ink-3 mt-0.5">{state.users.name}</div>
+                                  <span className="text-caption text-ink-3">{state.users.name}</span>
                                 )}
                                 {state.latest_eta_date && state.status !== 'blocked' && state.status !== 'done' && (
-                                  <div className="text-[10px] text-ink-3 mt-0.5">
+                                  <span className="text-caption text-ink-3 tabular-nums">
                                     {formatDelivery(state.latest_eta_date, state.latest_eta_time_window)}
-                                  </div>
+                                  </span>
                                 )}
                               </div>
                             ) : (
-                              <span className="text-[11px] text-ink-3">—</span>
+                              <span className="text-ink-faint">—</span>
                             )}
                           </td>
                         )
@@ -158,8 +140,19 @@ export default async function ProjectDetailPage({ params }: Props) {
               </tbody>
             </table>
           </div>
-        </div>
+        </section>
       )}
+
+      <section className="mt-8">
+        <SectionLabel>Project actions</SectionLabel>
+        <ProjectCleanupActions
+          projectId={project.id}
+          projectName={project.name}
+          viewCount={project.view_count}
+          afterDeleteHref="/admin/projects"
+          prominent
+        />
+      </section>
     </div>
   )
 }

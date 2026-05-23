@@ -1,4 +1,9 @@
 import { createClient } from '@/lib/supabase/server'
+import { Badge } from '@/components/ui/Badge'
+import { PageHead } from '@/components/ui/PageHead'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { STAGE_LABELS } from '@/lib/types/app'
+import type { StageType } from '@/lib/types/database'
 
 const EVENT_LABELS: Record<string, string> = {
   project_created: 'Project created',
@@ -18,6 +23,20 @@ const EVENT_LABELS: Record<string, string> = {
   stage_reopened: 'Stage reopened',
   stage_blocked: 'Stage blocked',
   stage_unblocked: 'Stage unblocked',
+}
+
+// Event type → status colour from the shared Badge map.
+const EVENT_BADGE: Record<string, string> = {
+  project_created: 'in_progress',
+  stage_started: 'in_progress',
+  stage_finished: 'done',
+  delivery_marked_sent: 'done',
+  admin_review_approved: 'done',
+  information_completed: 'done',
+  stage_blocked: 'blocked',
+  stage_reopened: 'reopened',
+  revision_round_created: 'reopened',
+  project_archived: 'archived',
 }
 
 interface BaseEvent {
@@ -61,65 +80,60 @@ export default async function EventsPage() {
   const all: EventRow[] = [
     ...((projectEvents ?? []) as unknown as Omit<ProjectEventRow, 'kind'>[]).map(e => ({ ...e, kind: 'project' as const })),
     ...((stageEvents ?? []) as unknown as Omit<StageEventRow, 'kind'>[]).map(e => ({ ...e, kind: 'stage' as const })),
-  ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+  ]
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     .slice(0, 150)
 
   return (
     <div>
-      <h1 className="text-[15px] font-medium text-ink mb-6">Event log</h1>
+      <PageHead title="Events" sub={all.length > 0 ? `Last ${all.length}` : undefined} />
 
-      {all.length === 0 && (
-        <div className="text-center py-16 text-ink-3 text-[13px]">No events yet.</div>
+      {all.length === 0 ? (
+        <EmptyState
+          icon="inbox"
+          title="No events yet"
+          sub="Activity from the team will show up here as projects move."
+        />
+      ) : (
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Project</th>
+                <th>Event</th>
+                <th>Detail</th>
+                <th>By</th>
+              </tr>
+            </thead>
+            <tbody>
+              {all.map(event => {
+                const label = EVENT_LABELS[event.event_type] ?? event.event_type
+                const detail =
+                  event.kind === 'stage'
+                    ? `${event.project_views?.label ?? ''} · ${STAGE_LABELS[event.stage as StageType] ?? event.stage}`
+                    : ''
+                return (
+                  <tr key={`${event.kind}-${event.id}`}>
+                    <td className="tabular-nums whitespace-nowrap text-ink-3">
+                      {new Date(event.created_at).toLocaleString('en-US', {
+                        month: 'short', day: 'numeric',
+                        hour: '2-digit', minute: '2-digit',
+                      })}
+                    </td>
+                    <td className="primary">{event.projects?.name ?? '—'}</td>
+                    <td>
+                      <Badge status={EVENT_BADGE[event.event_type] ?? 'not_started'} label={label} />
+                    </td>
+                    <td className="text-ink-3">{detail || '—'}</td>
+                    <td className="text-ink-3">{event.users?.name ?? '—'}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
-
-      <div className="bg-surface border border-line rounded-md overflow-hidden">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-line bg-elevated">
-              <th className="text-left px-4 py-2.5 text-[10px] tracking-[0.12em] uppercase text-ink-3">Time</th>
-              <th className="text-left px-4 py-2.5 text-[10px] tracking-[0.12em] uppercase text-ink-3">Project</th>
-              <th className="text-left px-4 py-2.5 text-[10px] tracking-[0.12em] uppercase text-ink-3">Event</th>
-              <th className="text-left px-4 py-2.5 text-[10px] tracking-[0.12em] uppercase text-ink-3">Detail</th>
-              <th className="text-left px-4 py-2.5 text-[10px] tracking-[0.12em] uppercase text-ink-3">By</th>
-            </tr>
-          </thead>
-          <tbody>
-            {all.map((event, i) => {
-              const label = EVENT_LABELS[event.event_type] ?? event.event_type
-              const detail = event.kind === 'stage'
-                ? `${event.project_views?.label ?? ''} - ${event.stage.replace('_', ' ')}`
-                : ''
-
-              return (
-                <tr key={`${event.kind}-${event.id}`} className={i > 0 ? 'border-t border-line' : ''}>
-                  <td className="px-4 py-2.5 text-[11px] text-ink-3 tabular-nums whitespace-nowrap">
-                    {new Date(event.created_at).toLocaleString('en-US', {
-                      month: 'short', day: 'numeric',
-                      hour: '2-digit', minute: '2-digit',
-                    })}
-                  </td>
-                  <td className="px-4 py-2.5 text-[12px] text-ink-2">
-                    {event.projects?.name ?? '-'}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-                      event.kind === 'stage'
-                        ? 'bg-elevated text-ink-2'
-                        : 'bg-progress-bg text-progress-text'
-                    }`}>
-                      {label}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 text-[11px] text-ink-3">{detail}</td>
-                  <td className="px-4 py-2.5 text-[11px] text-ink-3">
-                    {event.users?.name ?? '-'}
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
     </div>
   )
 }

@@ -2,8 +2,12 @@
 
 import { useState, useMemo } from 'react'
 import Link from 'next/link'
-import { StageBadge, ProjectBadge } from '@/components/ui/Badge'
+import { Badge } from '@/components/ui/Badge'
 import { ProgressBar } from '@/components/ui/ProgressBar'
+import { Select } from '@/components/ui/Input'
+import { FilterChip } from '@/components/ui/FilterChip'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { Icon } from '@/components/ui/Icon'
 import { calculateProgress } from '@/lib/utils/progress'
 import { formatDelivery, roundLabel } from '@/lib/utils/formatting'
 import { STAGE_LABELS, STAGE_ORDER } from '@/lib/types/app'
@@ -53,8 +57,6 @@ function getThisWeekEnd() {
   return d.toISOString().split('T')[0]
 }
 
-const selectClass = 'px-2.5 py-1.5 bg-surface border border-line rounded-md text-[12px] text-ink-2 focus:outline-none focus:border-accent transition-colors hover:border-line-strong'
-
 export function TimelineFilters({ projects, clients }: Props) {
   const [activeOnly, setActiveOnly] = useState(false)
   const [dueThisWeek, setDueThisWeek] = useState(false)
@@ -96,47 +98,45 @@ export function TimelineFilters({ projects, clients }: Props) {
     <div>
       {/* Filter bar */}
       <div className="flex items-center gap-2 mb-6 flex-wrap">
-        <button
-          onClick={() => setActiveOnly(v => !v)}
-          className={`px-2.5 py-1.5 rounded-md text-[12px] border transition-colors ${
-            activeOnly
-              ? 'bg-accent text-canvas border-accent'
-              : 'bg-surface text-ink-2 border-line hover:border-line-strong'
-          }`}
-        >
+        <FilterChip active={activeOnly} onClick={() => setActiveOnly(v => !v)}>
           Active only
-        </button>
-        <button
-          onClick={() => setDueThisWeek(v => !v)}
-          className={`px-2.5 py-1.5 rounded-md text-[12px] border transition-colors ${
-            dueThisWeek
-              ? 'bg-accent text-canvas border-accent'
-              : 'bg-surface text-ink-2 border-line hover:border-line-strong'
-          }`}
-        >
+        </FilterChip>
+        <FilterChip active={dueThisWeek} onClick={() => setDueThisWeek(v => !v)}>
           Due this week
-        </button>
+        </FilterChip>
 
-        <select value={clientFilter} onChange={e => setClientFilter(e.target.value)} className={selectClass}>
+        <Select
+          value={clientFilter}
+          onChange={e => setClientFilter(e.target.value)}
+          className="h-8 w-auto text-sm"
+        >
           <option value="">All clients</option>
           {clients.map(c => (
             <option key={c.id} value={c.name}>{c.name}</option>
           ))}
-        </select>
+        </Select>
 
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className={selectClass}>
+        <Select
+          value={statusFilter}
+          onChange={e => setStatusFilter(e.target.value)}
+          className="h-8 w-auto text-sm"
+        >
           {STATUS_OPTIONS.map(o => (
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
-        </select>
+        </Select>
 
         {allRounds.length > 1 && (
-          <select value={roundFilter} onChange={e => setRoundFilter(e.target.value)} className={selectClass}>
+          <Select
+            value={roundFilter}
+            onChange={e => setRoundFilter(e.target.value)}
+            className="h-8 w-auto text-sm"
+          >
             <option value="">All rounds</option>
             {allRounds.map(n => (
               <option key={n} value={n}>{roundLabel(n)}</option>
             ))}
-          </select>
+          </Select>
         )}
 
         {filtersActive && (
@@ -145,20 +145,24 @@ export function TimelineFilters({ projects, clients }: Props) {
               setActiveOnly(false); setDueThisWeek(false)
               setClientFilter(''); setStatusFilter(''); setRoundFilter('')
             }}
-            className="px-2.5 py-1.5 text-[12px] text-ink-3 hover:text-ink-2 transition-colors"
+            className="text-sm text-ink-3 hover:text-ink-2 transition-colors px-1.5"
           >
             Clear
           </button>
         )}
 
-        <span className="ml-auto text-[11px] text-ink-3">
+        <span className="ml-auto text-caption text-ink-3">
           {filtered.length} project{filtered.length !== 1 ? 's' : ''}
         </span>
       </div>
 
       {/* Timeline rows */}
       {filtered.length === 0 && (
-        <div className="text-center py-16 text-ink-3 text-[13px]">No projects match these filters.</div>
+        <EmptyState
+          icon="calendar"
+          title="No projects"
+          sub="No projects match these filters."
+        />
       )}
 
       <div className="space-y-6">
@@ -175,9 +179,9 @@ export function TimelineFilters({ projects, clients }: Props) {
           return (
             <div key={project.id} className="bg-surface border border-line rounded-md overflow-hidden">
               {/* Project header */}
-              <div className="px-5 py-3 border-b border-line flex items-center justify-between">
-                <div>
-                  <div className="flex items-center gap-1.5 text-[13px]">
+              <div className="px-5 py-3 border-b border-line flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 text-body truncate">
                     {project.clients && (
                       <span className="text-ink-3">{project.clients.name} /</span>
                     )}
@@ -189,12 +193,12 @@ export function TimelineFilters({ projects, clients }: Props) {
                     </Link>
                   </div>
                   <div className="flex items-center gap-2 mt-1">
-                    <ProjectBadge status={project.status} />
-                    <span className="text-[11px] text-ink-3">
+                    <Badge status={project.status} />
+                    <span className="text-caption text-ink-3">
                       {maxActiveRoundNumber !== null ? roundLabel(maxActiveRoundNumber) : '—'}
                     </span>
-                    <span className="text-ink-3 text-[11px]">·</span>
-                    <span className="text-[11px] text-ink-3">
+                    <span className="text-ink-faint text-caption">·</span>
+                    <span className="text-caption text-ink-3">
                       {formatDelivery(project.delivery_date, project.delivery_time_window)}
                     </span>
                   </div>
@@ -207,42 +211,40 @@ export function TimelineFilters({ projects, clients }: Props) {
               {/* View-stage grid */}
               {activeRounds.length > 0 && activeViews.length > 0 && (
                 <div className="overflow-x-auto">
-                  <table className="w-full">
+                  <table className="table">
                     <thead>
-                      <tr className="border-b border-line bg-elevated">
-                        <th className="text-left px-4 py-2 text-[10px] tracking-[0.12em] uppercase text-ink-3 w-20">View</th>
+                      <tr>
+                        <th className="w-20">View</th>
                         {STAGE_ORDER.map(stage => (
-                          <th key={stage} className="text-left px-4 py-2 text-[10px] tracking-[0.12em] uppercase text-ink-3">
-                            {STAGE_LABELS[stage]}
-                          </th>
+                          <th key={stage}>{STAGE_LABELS[stage]}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {activeViews.map((view, i) => {
+                      {activeViews.map(view => {
                         // Find active round states for this view
                         const viewActiveRound = activeRounds.find(r => r.project_view_id === view.id)
                         const viewStates = viewActiveRound?.view_stage_states ?? []
                         return (
-                          <tr key={view.id} className={i > 0 ? 'border-t border-line' : ''}>
-                            <td className="px-4 py-2.5 text-[11px] font-medium text-ink-2">{view.label}</td>
+                          <tr key={view.id}>
+                            <td className="primary">{view.label}</td>
                             {STAGE_ORDER.map(stage => {
                               const state = viewStates.find(
                                 s => s.project_view_id === view.id && s.stage === stage
                               )
                               return (
-                                <td key={stage} className="px-4 py-2.5">
+                                <td key={stage}>
                                   {state ? (
                                     <div>
-                                      <StageBadge status={state.status} />
+                                      <Badge status={state.status} />
                                       {state.latest_eta_date && (
-                                        <div className="text-[10px] text-ink-3 mt-0.5">
+                                        <div className="text-caption text-ink-3 mt-0.5">
                                           {formatDelivery(state.latest_eta_date, state.latest_eta_time_window)}
                                         </div>
                                       )}
                                     </div>
                                   ) : (
-                                    <span className="text-[11px] text-ink-3">—</span>
+                                    <span className="text-ink-faint">—</span>
                                   )}
                                 </td>
                               )
@@ -257,13 +259,14 @@ export function TimelineFilters({ projects, clients }: Props) {
 
               {/* Round history pills — show delivered view rounds */}
               {deliveredRounds.length > 0 && (
-                <div className="px-5 py-2.5 border-t border-line flex gap-2 flex-wrap">
+                <div className="px-5 py-2.5 border-t border-line flex items-center gap-2 flex-wrap">
                   {Array.from(new Set(deliveredRounds.map(r => r.round_number))).sort().map(rn => (
                     <span
                       key={rn}
-                      className="text-[10px] px-2 py-0.5 rounded-full bg-done-bg text-done-text"
+                      className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-done-bg text-done-text"
                     >
-                      {roundLabel(rn)} ✓
+                      {roundLabel(rn)}
+                      <Icon name="check" size={10} />
                     </span>
                   ))}
                 </div>

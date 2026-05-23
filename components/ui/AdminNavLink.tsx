@@ -11,10 +11,10 @@ export function AdminNavLink({ href, children }: { href: string; children: React
     <Link
       href={href}
       className={[
-        'px-3 py-1.5 text-[12px] rounded-md transition-colors',
+        'px-2.5 py-1.5 text-sm rounded-sm transition-colors duration-100 ease-out',
         isActive
           ? 'bg-elevated text-ink font-medium'
-          : 'text-ink-3 hover:text-ink-2 hover:bg-elevated',
+          : 'text-ink-3 hover:text-ink hover:bg-elevated',
       ].join(' ')}
     >
       {children}

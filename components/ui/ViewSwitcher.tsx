@@ -4,28 +4,20 @@ interface Props {
   active: 'widget' | 'admin'
 }
 
+const pill = 'px-2.5 py-1 text-caption uppercase font-semibold tracking-wide rounded-sm transition-colors duration-100 ease-out'
+
 export function ViewSwitcher({ active }: Props) {
   return (
-    <div className="flex items-center bg-elevated border border-line rounded-lg p-0.5 gap-0.5">
+    <div className="flex items-center gap-0.5 bg-surface border border-line rounded-md p-0.5">
       <Link
         href="/app/widget"
-        className={[
-          'px-3 py-1 text-[11px] font-medium rounded-md transition-all',
-          active === 'widget'
-            ? 'bg-overlay text-ink'
-            : 'text-ink-3 hover:text-ink-2',
-        ].join(' ')}
+        className={`${pill} ${active === 'widget' ? 'bg-overlay text-ink' : 'text-ink-3 hover:text-ink-2'}`}
       >
         Widget
       </Link>
       <Link
         href="/admin/projects"
-        className={[
-          'px-3 py-1 text-[11px] font-medium rounded-md transition-all',
-          active === 'admin'
-            ? 'bg-overlay text-ink'
-            : 'text-ink-3 hover:text-ink-2',
-        ].join(' ')}
+        className={`${pill} ${active === 'admin' ? 'bg-overlay text-ink' : 'text-ink-3 hover:text-ink-2'}`}
       >
         Admin
       </Link>

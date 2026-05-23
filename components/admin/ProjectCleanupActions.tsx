@@ -3,6 +3,9 @@
 import { useRouter } from 'next/navigation'
 import { useState, useTransition } from 'react'
 import { archiveProject, deleteProjectPermanently } from '@/lib/actions/projects'
+import { Button } from '@/components/ui/Button'
+import { Card } from '@/components/ui/Card'
+import { Input } from '@/components/ui/Input'
 
 type Pending = 'archive' | 'delete' | null
 
@@ -57,104 +60,97 @@ export function ProjectCleanupActions({
     setDeleteConfirmText('')
   }
 
+  const openArchive = () => { setConfirming('archive'); setError(null) }
+  const openDelete = () => { setConfirming('delete'); setError(null); setDeleteConfirmText('') }
+
   return (
     <>
-      <div className={prominent ? 'rounded-md border border-blocked-text/25 bg-blocked-bg/20 p-4' : ''}>
-        {prominent && (
-          <div className="mb-3">
-            <p className="text-[12px] font-medium text-ink">Project actions</p>
-            <p className="text-[11px] text-ink-3 mt-0.5">Archive keeps history. Delete permanently removes this project.</p>
-          </div>
-        )}
-        <div className={compact ? 'flex items-center gap-2' : 'flex flex-wrap items-center gap-2'}>
-        <button
-          type="button"
-          onClick={() => { setConfirming('archive'); setError(null) }}
-          disabled={isPending}
-          className={`${prominent ? 'px-3 py-2 text-[12px]' : 'px-2.5 py-1 text-[11px]'} text-ink-2 border border-line-strong rounded hover:text-accent hover:border-accent disabled:opacity-40 transition-colors`}
-        >
-          Archive project
-        </button>
-        <button
-          type="button"
-          onClick={() => { setConfirming('delete'); setError(null); setDeleteConfirmText('') }}
-          disabled={isPending}
-          className={`${prominent ? 'px-3 py-2 text-[12px]' : 'px-2.5 py-1 text-[11px]'} text-blocked-text border border-blocked-text/40 rounded hover:bg-blocked-bg disabled:opacity-40 transition-colors`}
-        >
-          Delete project permanently
-        </button>
+      {compact ? (
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="sm" onClick={openArchive} disabled={isPending}>Archive</Button>
+          <Button variant="danger" size="sm" onClick={openDelete} disabled={isPending}>Delete</Button>
         </div>
-      </div>
+      ) : prominent ? (
+        <Card>
+          <div className="mb-3">
+            <p className="text-sm font-medium text-ink">Archive or delete</p>
+            <p className="text-caption text-ink-3 mt-0.5">
+              Archive keeps history. Delete permanently removes this project.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" size="sm" leftIcon="archive" onClick={openArchive} disabled={isPending}>
+              Archive project
+            </Button>
+            <Button variant="danger" size="sm" onClick={openDelete} disabled={isPending}>
+              Delete project permanently
+            </Button>
+          </div>
+        </Card>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="secondary" size="sm" leftIcon="archive" onClick={openArchive} disabled={isPending}>
+            Archive project
+          </Button>
+          <Button variant="danger" size="sm" onClick={openDelete} disabled={isPending}>
+            Delete project permanently
+          </Button>
+        </div>
+      )}
 
       {confirming && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="bg-canvas border border-line rounded-lg p-6 w-96 shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6">
+          <div className="w-full max-w-sm bg-canvas border border-line-strong rounded-lg p-6 shadow-xl">
             {confirming === 'archive' ? (
               <>
-                <p className="text-[13px] text-ink font-medium mb-1">Archive project?</p>
-                <p className="text-[12px] text-ink-3 mb-1 truncate">{projectName}</p>
-                <p className="text-[11px] text-ink-3 mb-5">
+                <p className="text-body font-medium text-ink mb-1">Archive project?</p>
+                <p className="text-sm text-ink-3 mb-1 truncate">{projectName}</p>
+                <p className="text-caption text-ink-3 mb-5">
                   Hides from the widget and active lists. All data and history are kept.
                 </p>
-                {error && <p className="text-[11px] text-blocked-text mb-3">{error}</p>}
+                {error && <p className="text-caption text-blocked-text mb-3">{error}</p>}
                 <div className="flex gap-2 justify-end">
-                  <button
-                    onClick={closeModal}
-                    disabled={isPending}
-                    className="px-3 py-1.5 text-[12px] text-ink-3 hover:text-ink-2 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleArchive}
-                    disabled={isPending}
-                    className="px-3 py-1.5 text-[12px] font-medium rounded-md bg-elevated text-ink border border-line-strong hover:border-accent hover:text-accent disabled:opacity-40 transition-colors"
-                  >
-                    {isPending ? '…' : 'Archive'}
-                  </button>
+                  <Button variant="ghost" size="sm" onClick={closeModal} disabled={isPending}>Cancel</Button>
+                  <Button variant="secondary" size="sm" onClick={handleArchive} loading={isPending}>Archive</Button>
                 </div>
               </>
             ) : (
               <>
-                <p className="text-[13px] text-ink font-medium mb-1">Delete project permanently?</p>
-                <p className="text-[12px] text-ink-2 mb-1 truncate">{projectName}</p>
+                <p className="text-body font-medium text-ink mb-1">Delete project permanently?</p>
+                <p className="text-sm text-ink-2 mb-1 truncate">{projectName}</p>
                 {viewCount !== undefined && (
-                  <p className="text-[11px] text-ink-3 mb-1">{viewCount} view{viewCount !== 1 ? 's' : ''}</p>
+                  <p className="text-caption text-ink-3 mb-1">{viewCount} view{viewCount !== 1 ? 's' : ''}</p>
                 )}
-                <p className="text-[11px] text-blocked-text mb-4">
+                <p className="text-caption text-blocked-text mb-4">
                   All views, rounds, stage states, and history will be permanently removed. This cannot be undone.
                 </p>
 
                 <div className="mb-4">
-                  <label className="block text-[11px] text-ink-3 mb-1.5">
+                  <label className="block text-caption text-ink-3 mb-1.5">
                     Type <span className="font-mono font-medium text-ink-2">DELETE PROJECT</span> to confirm
                   </label>
-                  <input
+                  <Input
                     type="text"
                     value={deleteConfirmText}
                     onChange={e => setDeleteConfirmText(e.target.value)}
                     placeholder="DELETE PROJECT"
                     autoFocus
-                    className="w-full px-2.5 py-2 bg-canvas border border-line rounded-md text-[13px] text-ink font-mono placeholder-ink-3/40 focus:outline-none focus:border-blocked-text transition-colors"
+                    className="font-mono"
                   />
                 </div>
 
-                {error && <p className="text-[11px] text-blocked-text mb-3">{error}</p>}
+                {error && <p className="text-caption text-blocked-text mb-3">{error}</p>}
                 <div className="flex gap-2 justify-end">
-                  <button
-                    onClick={closeModal}
-                    disabled={isPending}
-                    className="px-3 py-1.5 text-[12px] text-ink-3 hover:text-ink-2 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
+                  <Button variant="ghost" size="sm" onClick={closeModal} disabled={isPending}>Cancel</Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
                     onClick={handleDelete}
                     disabled={isPending || !deleteReady}
-                    className="px-3 py-1.5 text-[12px] font-medium rounded-md bg-blocked-bg text-blocked-text border border-blocked-text/30 hover:border-blocked-text/60 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    loading={isPending}
                   >
-                    {isPending ? '…' : 'Delete permanently'}
-                  </button>
+                    Delete permanently
+                  </Button>
                 </div>
               </>
             )}

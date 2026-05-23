@@ -1,13 +1,26 @@
-export function ProgressBar({ value }: { value: number }) {
+interface ProgressBarProps {
+  value: number
+  showPct?: boolean
+  tone?: 'accent' | 'done'
+}
+
+export function ProgressBar({ value, showPct = true, tone = 'accent' }: ProgressBarProps) {
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex items-center gap-2.5 w-full">
       <div className="flex-1 bg-elevated rounded-full h-[3px] overflow-hidden">
         <div
-          className="bg-accent h-full rounded-full transition-all duration-500 ease-out"
-          style={{ width: `${value}%` }}
+          className={[
+            'h-full rounded-full transition-[width] duration-500 ease-out',
+            tone === 'done' ? 'bg-done-text' : 'bg-accent',
+          ].join(' ')}
+          style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
         />
       </div>
-      <span className="text-[11px] text-ink-2 tabular-nums w-7 text-right shrink-0 font-medium">{value}%</span>
+      {showPct && (
+        <span className="text-caption text-ink-2 tabular-nums font-medium min-w-[34px] text-right shrink-0">
+          {value}%
+        </span>
+      )}
     </div>
   )
 }

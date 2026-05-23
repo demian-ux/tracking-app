@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { NewProjectForm } from '@/components/admin/NewProjectForm'
+import { PageHead } from '@/components/ui/PageHead'
 
 export default async function NewProjectPage() {
   const supabase = await createClient()
@@ -7,7 +8,7 @@ export default async function NewProjectPage() {
 
   return (
     <div className="max-w-lg">
-      <h1 className="text-[15px] font-medium text-ink mb-6">New project</h1>
+      <PageHead title="New project" />
       <NewProjectForm clients={clients ?? []} />
     </div>
   )
