@@ -35,7 +35,6 @@ export default function LoginPage() {
         <div className="mb-8 opacity-80">
           <Brand size={18} />
         </div>
-        <div className="text-caption uppercase tracking-[0.15em] text-ink-3 mb-1">Oaki Studio</div>
         <h1 className="text-display font-semibold text-ink mb-8">Sign in</h1>
 
         <form onSubmit={handleSubmit} className="space-y-2">
