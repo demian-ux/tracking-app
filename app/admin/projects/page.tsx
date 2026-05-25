@@ -17,11 +17,11 @@ interface ProjectListRow {
   delivery_date: string | null
   delivery_time_window: TimeWindow | null
   view_count: number
-  delivery_count: number
   clients: { name: string } | null
   project_view_rounds: {
     id: string
     status: string
+    delivered_at: string | null
     view_stage_states: { status: StageStatus }[]
   }[]
 }
@@ -33,10 +33,10 @@ export default async function ProjectsPage() {
     .from('projects')
     .select(`
       id, name, status, delivery_date, delivery_time_window,
-      view_count, delivery_count,
+      view_count,
       clients ( name ),
       project_view_rounds (
-        id, status,
+        id, status, delivered_at,
         view_stage_states ( status )
       )
     `)
@@ -84,6 +84,11 @@ export default async function ProjectsPage() {
               ?.filter(r => r.status === 'active')
               .flatMap(r => r.view_stage_states ?? []) ?? []
           const progress = calculateProgress(activeStates)
+          const deliveryCount = new Set(
+            (project.project_view_rounds ?? [])
+              .filter(r => r.status === 'delivered' && r.delivered_at)
+              .map(r => r.delivered_at)
+          ).size
 
           return (
             <div
@@ -101,7 +106,7 @@ export default async function ProjectsPage() {
                   <span>{project.view_count} views</span>
                   <span className="text-ink-faint">·</span>
                   <span>
-                    {project.delivery_count} {project.delivery_count === 1 ? 'delivery' : 'deliveries'} sent
+                    {deliveryCount} {deliveryCount === 1 ? 'delivery' : 'deliveries'} sent
                   </span>
                   <span className="text-ink-faint">·</span>
                   <span>{formatDelivery(project.delivery_date, project.delivery_time_window)}</span>

@@ -67,6 +67,14 @@ export default async function ProjectDetailPage({ params }: Props) {
 
   const progress = calculateProgress(stageStates ?? [])
 
+  // Source of truth for "deliveries sent" — distinct delivered_at timestamps
+  // on delivered rounds. projects.delivery_count can drift; this can't.
+  const deliveryCount = new Set(
+    (viewRounds ?? [])
+      .filter(r => r.status === 'delivered' && r.delivered_at)
+      .map(r => r.delivered_at)
+  ).size
+
   return (
     <div>
       <Link
@@ -86,7 +94,7 @@ export default async function ProjectDetailPage({ params }: Props) {
             {project.name}
           </>
         }
-        sub={`${project.view_count} views · ${project.delivery_count} ${project.delivery_count === 1 ? 'delivery' : 'deliveries'} sent`}
+        sub={`${project.view_count} views · ${deliveryCount} ${deliveryCount === 1 ? 'delivery' : 'deliveries'} sent`}
       />
 
       <ProjectDetailClient
