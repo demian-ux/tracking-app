@@ -53,10 +53,14 @@ export function DeliveriesHistory({ groups }: Props) {
       setPendingKey(null)
       setConfirmKey(null)
       if (result.error) setFeedback({ ok: false, msg: result.error })
-      else setFeedback({
-        ok: true,
-        msg: `Reverted ${group.views.length} view${group.views.length > 1 ? 's' : ''} for ${group.projectName}.`,
-      })
+      else {
+        const removed = result.data?.revisionRoundsRemoved ?? 0
+        const suffix = removed > 0 ? ` (also removed ${removed} empty revision round${removed > 1 ? 's' : ''})` : ''
+        setFeedback({
+          ok: true,
+          msg: `Reverted ${group.views.length} view${group.views.length > 1 ? 's' : ''} for ${group.projectName}.${suffix}`,
+        })
+      }
     })
   }
 

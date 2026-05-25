@@ -96,7 +96,6 @@ export async function undoDeliverySent(projectId: string, deliveredAt: string) {
   if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
   const { user, supabase } = auth.data
 
-  // Find all delivered rounds at this exact timestamp for this project
   const { data: rounds } = await supabase
     .from('project_view_rounds')
     .select('id, project_view_id, round_number')
@@ -108,20 +107,45 @@ export async function undoDeliverySent(projectId: string, deliveredAt: string) {
     return { error: 'No delivery found at that timestamp.' }
   }
 
-  // Safety: refuse if any of these views has a higher-numbered round (revision
-  // work that would be orphaned).
-  for (const r of rounds) {
-    const { data: later } = await supabase
-      .from('project_view_rounds')
-      .select('id')
-      .eq('project_view_id', r.project_view_id)
-      .gt('round_number', r.round_number)
-      .limit(1)
-    if (later && later.length > 0) {
+  // Find subsequent rounds (revision rounds created after this delivery) and
+  // check whether any of them have started work. If they have, refuse — the
+  // user must reset those stages first. If they're all clean, cascade-delete
+  // them so the undo can proceed.
+  const viewIds = rounds.map(r => r.project_view_id)
+  const maxRoundByView = new Map<string, number>()
+  for (const r of rounds) maxRoundByView.set(r.project_view_id, r.round_number)
+
+  const { data: laterRounds, error: laterErr } = await supabase
+    .from('project_view_rounds')
+    .select(`
+      id, project_view_id, round_number,
+      view_stage_states ( status )
+    `)
+    .eq('project_id', projectId)
+    .in('project_view_id', viewIds)
+
+  if (laterErr) return { error: laterErr.message }
+
+  const laterToDelete: string[] = []
+  for (const lr of laterRounds ?? []) {
+    const threshold = maxRoundByView.get(lr.project_view_id)
+    if (threshold === undefined || lr.round_number <= threshold) continue
+    const states = (lr as unknown as { view_stage_states: { status: string }[] }).view_stage_states ?? []
+    const hasWork = states.some(s => s.status !== 'not_started')
+    if (hasWork) {
       return {
-        error: 'Cannot undo: a revision round exists after this delivery for one or more views. Delete that revision first.',
+        error: 'Cannot undo: a revision round after this delivery has started work. Reset those stages back to "not started" first, then try again.',
       }
     }
+    laterToDelete.push(lr.id)
+  }
+
+  if (laterToDelete.length > 0) {
+    const { error: deleteErr } = await supabase
+      .from('project_view_rounds')
+      .delete()
+      .in('id', laterToDelete)
+    if (deleteErr) return { error: `Could not remove revision rounds: ${deleteErr.message}` }
   }
 
   const { error: revertErr } = await supabase
@@ -132,16 +156,15 @@ export async function undoDeliverySent(projectId: string, deliveredAt: string) {
 
   const { data: project } = await supabase
     .from('projects')
-    .select('delivery_count, status')
+    .select('delivery_count')
     .eq('id', projectId)
     .single()
 
   const newCount = Math.max(0, (project?.delivery_count ?? 0) - 1)
-  const newStatus = project?.status === 'waiting_for_feedback' ? 'active' : project?.status
 
   const { error: projectErr } = await supabase
     .from('projects')
-    .update({ delivery_count: newCount, status: newStatus })
+    .update({ delivery_count: newCount, status: 'active' })
     .eq('id', projectId)
   if (projectErr) return { error: projectErr.message }
 
@@ -152,11 +175,17 @@ export async function undoDeliverySent(projectId: string, deliveredAt: string) {
     payload: {
       delivered_at: deliveredAt,
       view_ids: rounds.map(r => r.project_view_id),
+      revision_rounds_removed: laterToDelete.length,
     },
   })
 
   revalidateProjectScreens(projectId)
-  return { data: { revertedCount: rounds.length } }
+  return {
+    data: {
+      revertedCount: rounds.length,
+      revisionRoundsRemoved: laterToDelete.length,
+    },
+  }
 }
 
 export async function createRevisionRound(projectId: string, viewIds: string[]) {
