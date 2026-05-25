@@ -1,6 +1,6 @@
 [package]
 name = "oaki-widget"
-version = "0.1.0"
+version = "0.2.0"
 description = "Oaki Studio Desktop Widget"
 authors = ["Oaki Studio"]
 edition = "2021"

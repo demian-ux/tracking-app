@@ -19,26 +19,30 @@ export default async function ProjectDetailPage({ params }: Props) {
   const { id } = await params
   const supabase = await createClient()
 
-  const { data: project } = await supabase
-    .from('projects')
-    .select('*, clients ( id, name, contact_name, contact_email )')
-    .eq('id', id)
-    .single()
+  // Three independent reads in parallel — used to be sequential
+  const [projectResult, viewRoundsResult, viewsResult] = await Promise.all([
+    supabase
+      .from('projects')
+      .select('*, clients ( id, name, contact_name, contact_email )')
+      .eq('id', id)
+      .single(),
+    supabase
+      .from('project_view_rounds')
+      .select('*')
+      .eq('project_id', id)
+      .order('round_number'),
+    supabase
+      .from('project_views')
+      .select('*')
+      .eq('project_id', id)
+      .eq('active', true)
+      .order('number'),
+  ])
 
+  const project = projectResult.data
   if (!project) notFound()
-
-  const { data: viewRounds } = await supabase
-    .from('project_view_rounds')
-    .select('*')
-    .eq('project_id', id)
-    .order('round_number')
-
-  const { data: views } = await supabase
-    .from('project_views')
-    .select('*')
-    .eq('project_id', id)
-    .eq('active', true)
-    .order('number')
+  const viewRounds = viewRoundsResult.data
+  const views = viewsResult.data
 
   const activeRoundIds = (viewRounds ?? []).filter(r => r.status === 'active').map(r => r.id)
 
@@ -48,6 +52,18 @@ export default async function ProjectDetailPage({ params }: Props) {
         .select('*, users ( name )')
         .in('project_view_round_id', activeRoundIds)
     : { data: [] }
+
+  // O(1) lookup maps for the table render below — replaces .find() per cell
+  type StageState = NonNullable<typeof stageStates>[number]
+  type ViewRound = NonNullable<typeof viewRounds>[number]
+  const stateMap = new Map<string, StageState>()
+  for (const s of stageStates ?? []) {
+    stateMap.set(`${s.project_view_id}:${s.stage}`, s)
+  }
+  const activeRoundByView = new Map<string, ViewRound>()
+  for (const r of viewRounds ?? []) {
+    if (r.status === 'active') activeRoundByView.set(r.project_view_id, r)
+  }
 
   const progress = calculateProgress(stageStates ?? [])
 
@@ -96,9 +112,7 @@ export default async function ProjectDetailPage({ params }: Props) {
               </thead>
               <tbody>
                 {views.map(view => {
-                  const activeRound = (viewRounds ?? []).find(
-                    r => r.project_view_id === view.id && r.status === 'active'
-                  )
+                  const activeRound = activeRoundByView.get(view.id)
                   return (
                     <tr key={view.id}>
                       <td className="primary">
@@ -108,9 +122,7 @@ export default async function ProjectDetailPage({ params }: Props) {
                         )}
                       </td>
                       {STAGE_ORDER.map(stage => {
-                        const state = (stageStates ?? []).find(
-                          s => s.project_view_id === view.id && s.stage === stage
-                        )
+                        const state = stateMap.get(`${view.id}:${stage}`)
                         return (
                           <td key={stage}>
                             {state ? (

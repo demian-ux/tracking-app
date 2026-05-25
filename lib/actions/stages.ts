@@ -1,282 +1,82 @@
-﻿'use server'
+'use server'
 
 import { revalidateProjectScreens } from '@/lib/utils/revalidate'
 import { requireWorker, requireAdmin } from '@/lib/actions/auth'
 import type { StartStageInput, FinishStageInput, ProjectViewRound } from '@/lib/types/app'
-import { STAGE_ORDER, STAGE_LABELS } from '@/lib/types/app'
 import type { StageType, StageStatus } from '@/lib/types/database'
+
+type RpcResult<T = unknown> =
+  | ({ ok: true } & T)
+  | { ok: false; error: string; [key: string]: unknown }
+
+function rpcErrorToString(error: unknown): string {
+  if (!error) return 'Unexpected error.'
+  if (typeof error === 'string') return error
+  if (typeof error === 'object' && 'message' in error && typeof (error as { message: unknown }).message === 'string') {
+    return (error as { message: string }).message
+  }
+  return 'Unexpected error.'
+}
 
 export async function ensureProjectWorkflow(projectId: string) {
   const auth = await requireWorker()
   if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
   const { supabase } = auth.data
 
-  const { data: project } = await supabase
-    .from('projects')
-    .select('id, status')
-    .eq('id', projectId)
-    .single()
+  const { data, error } = await supabase.rpc('ensure_workflow_v2_rpc', {
+    p_project_id: projectId,
+  })
 
-  if (!project) return { error: 'Project not found' }
-  if (project.status === 'archived') return { error: 'Project is archived' }
+  if (error) return { error: rpcErrorToString(error) }
+  const result = data as RpcResult<{ rounds: ProjectViewRound[]; states: unknown[] }>
+  if (!result?.ok) return { error: result?.error ?? 'Workflow error' }
 
-  const { data: views } = await supabase
-    .from('project_views')
-    .select('id')
-    .eq('project_id', projectId)
-    .eq('active', true)
-
-  if (!views || views.length === 0) return { error: 'Project has no active views' }
-
-  // Fetch all existing view rounds for this project
-  const { data: existingRounds, error: roundsError } = await supabase
-    .from('project_view_rounds')
-    .select('*')
-    .eq('project_id', projectId)
-
-  if (roundsError) return { error: roundsError.message }
-
-  const rounds: ProjectViewRound[] = []
-
-  for (const view of views) {
-    const viewRounds = (existingRounds ?? []).filter(r => r.project_view_id === view.id)
-    let activeRound = viewRounds.find(r => r.status === 'active') ?? null
-
-    if (!activeRound) {
-      // Find latest round and reactivate, or create round 0
-      const latestRound = viewRounds.sort((a, b) => b.round_number - a.round_number)[0] ?? null
-
-      if (latestRound) {
-        const { data: reactivated, error: reactivateErr } = await supabase
-          .from('project_view_rounds')
-          .update({ status: 'active' })
-          .eq('id', latestRound.id)
-          .select()
-          .single()
-
-        if (reactivateErr) return { error: reactivateErr.message }
-        activeRound = reactivated
-      } else {
-        const { data: newRound, error: createErr } = await supabase
-          .from('project_view_rounds')
-          .insert({
-            project_id: projectId,
-            project_view_id: view.id,
-            round_number: 0,
-            status: 'active',
-          })
-          .select()
-          .single()
-
-        if (createErr || !newRound) {
-          return { error: createErr?.message ?? 'Could not create view round' }
-        }
-        activeRound = newRound
-      }
-    }
-
-    rounds.push(activeRound)
-  }
-
-  // Ensure stage states exist for all active view rounds
-  const { data: existingStates } = await supabase
-    .from('view_stage_states')
-    .select('project_view_round_id, project_view_id, stage')
-    .in('project_view_round_id', rounds.map(r => r.id))
-
-  const existingSet = new Set(
-    (existingStates ?? []).map(s => `${s.project_view_round_id}:${s.project_view_id}:${s.stage}`)
-  )
-
-  const missing = rounds.flatMap(round =>
-    STAGE_ORDER
-      .filter(stage => !existingSet.has(`${round.id}:${round.project_view_id}:${stage}`))
-      .map(stage => ({
-        project_id: projectId,
-        project_view_round_id: round.id,
-        project_view_id: round.project_view_id,
-        stage: stage as StageType,
-        status: 'not_started' as const,
-      }))
-  )
-
-  if (missing.length > 0) {
-    const { error: insertErr } = await supabase.from('view_stage_states').insert(missing)
-    if (insertErr) {
-      return { error: `Could not create workflow rows: ${insertErr.message}` }
-    }
-  }
-
-  const { data: states } = await supabase
-    .from('view_stage_states')
-    .select('*')
-    .in('project_view_round_id', rounds.map(r => r.id))
-
-  return { data: { rounds, states: states ?? [] } }
+  return { data: { rounds: result.rounds, states: result.states } }
 }
 
 export async function startStage(input: StartStageInput) {
   const auth = await requireWorker()
   if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
-  const { user, profile, supabase } = auth.data
+  const { supabase } = auth.data
 
-  // Find the active round for each selected view
-  const { data: activeRounds } = await supabase
-    .from('project_view_rounds')
-    .select('id, project_view_id')
-    .eq('project_id', input.projectId)
-    .eq('status', 'active')
-    .in('project_view_id', input.viewIds)
+  const { data, error } = await supabase.rpc('start_stage_v2_rpc', {
+    p_project_id: input.projectId,
+    p_view_ids: input.viewIds,
+    p_stage: input.stage,
+    p_eta_date: input.etaDate ?? null,
+    p_eta_time_window: input.etaTimeWindow ?? null,
+  })
 
-  if (!activeRounds || activeRounds.length !== input.viewIds.length) {
-    return { error: 'Could not find active round for all selected views' }
-  }
-
-  const roundIds = activeRounds.map(r => r.id)
-
-  // Sequential stage enforcement â€” team members cannot skip stages
-  if (profile.role !== 'admin') {
-    const idx = STAGE_ORDER.indexOf(input.stage)
-    if (idx > 0) {
-      const prevStage = STAGE_ORDER[idx - 1]
-      const { data: prevStates } = await supabase
-        .from('view_stage_states')
-        .select('project_view_id, status')
-        .in('project_view_round_id', roundIds)
-        .in('project_view_id', input.viewIds)
-        .eq('stage', prevStage)
-      const notReady = (prevStates ?? []).filter(s => s.status !== 'done')
-      if (notReady.length > 0) {
-        return { error: `Finish ${STAGE_LABELS[prevStage as StageType]} first` }
-      }
+  if (error) return { error: rpcErrorToString(error) }
+  const result = data as RpcResult<{ updatedStates: unknown[] }> & { conflictingViewIds?: string[] }
+  if (!result?.ok) {
+    if (result?.error === 'conflict') {
+      return { error: 'conflict' as const, conflictingViewIds: result.conflictingViewIds ?? [] }
     }
+    return { error: result?.error ?? 'Start failed' }
   }
-
-  const { data: currentStates } = await supabase
-    .from('view_stage_states')
-    .select('id, project_view_id, project_view_round_id, status, assigned_user_id')
-    .in('project_view_round_id', roundIds)
-    .in('project_view_id', input.viewIds)
-    .eq('stage', input.stage)
-
-  if (!currentStates || currentStates.length !== input.viewIds.length) {
-    return { error: 'Stage data not found for selected views' }
-  }
-
-  const conflictingViewIds = currentStates
-    .filter(s => s.status === 'in_progress' && s.assigned_user_id !== user.id)
-    .map(s => s.project_view_id)
-
-  if (conflictingViewIds.length > 0) {
-    return { error: 'conflict', conflictingViewIds }
-  }
-
-  const notStartable = currentStates.filter(
-    s => s.status !== 'not_started' && s.status !== 'reopened'
-  )
-  if (notStartable.length > 0) {
-    return { error: 'Some selected views cannot be started in their current state' }
-  }
-
-  const stateIds = currentStates.map(s => s.id)
-
-  const { data: updatedStates, error: updateErr } = await supabase
-    .from('view_stage_states')
-    .update({
-      status: 'in_progress',
-      assigned_user_id: user.id,
-      started_at: new Date().toISOString(),
-      latest_eta_date: input.etaDate ?? null,
-      latest_eta_time_window: input.etaTimeWindow ?? null,
-    })
-    .in('id', stateIds)
-    .select('id, project_view_id, project_view_round_id, stage, status, assigned_user_id, started_at, completed_at, latest_eta_date, latest_eta_time_window')
-
-  if (updateErr) return { error: updateErr.message }
-
-  await supabase.from('stage_events').insert(
-    currentStates.map(s => ({
-      project_id: input.projectId,
-      project_view_round_id: s.project_view_round_id,
-      project_view_id: s.project_view_id,
-      stage: input.stage,
-      event_type: 'stage_started' as const,
-      actor_id: user.id,
-      eta_date: input.etaDate ?? null,
-      eta_time_window: input.etaTimeWindow ?? null,
-    }))
-  )
 
   revalidateProjectScreens(input.projectId)
-  return { data: { updatedStates: updatedStates ?? [] } }
+  return { data: { updatedStates: result.updatedStates ?? [] } }
 }
 
 export async function finishStage(input: FinishStageInput) {
   const auth = await requireWorker()
   if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
-  const { user, supabase } = auth.data
+  const { supabase } = auth.data
 
-  // Find the active round for each selected view
-  const { data: activeRounds } = await supabase
-    .from('project_view_rounds')
-    .select('id, project_view_id')
-    .eq('project_id', input.projectId)
-    .eq('status', 'active')
-    .in('project_view_id', input.viewIds)
+  const { data, error } = await supabase.rpc('finish_stage_v2_rpc', {
+    p_project_id: input.projectId,
+    p_view_ids: input.viewIds,
+    p_stage: input.stage,
+  })
 
-  if (!activeRounds || activeRounds.length !== input.viewIds.length) {
-    return { error: 'Could not find active round for all selected views' }
-  }
-
-  const roundIds = activeRounds.map(r => r.id)
-
-  const { data: currentStates } = await supabase
-    .from('view_stage_states')
-    .select('id, project_view_id, project_view_round_id, status, assigned_user_id')
-    .in('project_view_round_id', roundIds)
-    .in('project_view_id', input.viewIds)
-    .eq('stage', input.stage)
-
-  if (!currentStates || currentStates.length !== input.viewIds.length) {
-    return { error: 'Stage data not found' }
-  }
-
-  const notFinishable = currentStates.filter(
-    s => s.status !== 'in_progress' || s.assigned_user_id !== user.id
-  )
-  if (notFinishable.length > 0) {
-    return { error: 'Cannot finish: some views are not in progress or assigned to you' }
-  }
-
-  const stateIds = currentStates.map(s => s.id)
-
-  const { data: updatedStates, error: updateErr } = await supabase
-    .from('view_stage_states')
-    .update({
-      status: 'done',
-      assigned_user_id: null,
-      completed_at: new Date().toISOString(),
-      latest_eta_date: null,
-      latest_eta_time_window: null,
-    })
-    .in('id', stateIds)
-    .select('id, project_view_id, project_view_round_id, stage, status, assigned_user_id, started_at, completed_at, latest_eta_date, latest_eta_time_window')
-
-  if (updateErr) return { error: updateErr.message }
-
-  await supabase.from('stage_events').insert(
-    currentStates.map(s => ({
-      project_id: input.projectId,
-      project_view_round_id: s.project_view_round_id,
-      project_view_id: s.project_view_id,
-      stage: input.stage,
-      event_type: 'stage_finished' as const,
-      actor_id: user.id,
-    }))
-  )
+  if (error) return { error: rpcErrorToString(error) }
+  const result = data as RpcResult<{ updatedStates: unknown[] }>
+  if (!result?.ok) return { error: result?.error ?? 'Finish failed' }
 
   revalidateProjectScreens(input.projectId)
-  return { data: { updatedStates: updatedStates ?? [] } }
+  return { data: { updatedStates: result.updatedStates ?? [] } }
 }
 
 export async function blockStage(
@@ -287,68 +87,49 @@ export async function blockStage(
 ) {
   const auth = await requireWorker()
   if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
-  const { user, supabase } = auth.data
+  const { supabase } = auth.data
 
-  // Find the active round for each selected view
-  const { data: activeRounds } = await supabase
-    .from('project_view_rounds')
-    .select('id, project_view_id')
-    .eq('project_id', projectId)
-    .eq('status', 'active')
-    .in('project_view_id', viewIds)
+  const { data, error } = await supabase.rpc('block_stage_v2_rpc', {
+    p_project_id: projectId,
+    p_view_ids: viewIds,
+    p_stage: stage,
+    p_reason: reason,
+  })
 
-  if (!activeRounds || activeRounds.length !== viewIds.length) {
-    return { error: 'Could not find active round for all selected views' }
-  }
-
-  const roundIds = activeRounds.map(r => r.id)
-
-  const { data: currentStates } = await supabase
-    .from('view_stage_states')
-    .select('id, project_view_id, project_view_round_id, status, assigned_user_id')
-    .in('project_view_round_id', roundIds)
-    .in('project_view_id', viewIds)
-    .eq('stage', stage)
-
-  if (!currentStates || currentStates.length !== viewIds.length) {
-    return { error: 'Stage data not found' }
-  }
-
-  const notBlockable = currentStates.filter(
-    s => s.status !== 'in_progress' || s.assigned_user_id !== user.id
-  )
-  if (notBlockable.length > 0) {
-    return { error: 'Cannot block: some views are not in progress or assigned to you' }
-  }
-
-  const stateIds = currentStates.map(s => s.id)
-
-  const { data: updatedStates, error: updateErr } = await supabase
-    .from('view_stage_states')
-    .update({
-      status: 'blocked',
-      block_reason: reason,
-      status_before_block: 'in_progress',
-    })
-    .in('id', stateIds)
-    .select('id, project_view_id, project_view_round_id, stage, status, assigned_user_id, started_at, completed_at, latest_eta_date, latest_eta_time_window, block_reason')
-
-  if (updateErr) return { error: updateErr.message }
-
-  await supabase.from('stage_events').insert(
-    currentStates.map(s => ({
-      project_id: projectId,
-      project_view_round_id: s.project_view_round_id,
-      project_view_id: s.project_view_id,
-      stage: stage as StageType,
-      event_type: 'stage_blocked' as const,
-      actor_id: user.id,
-    }))
-  )
+  if (error) return { error: rpcErrorToString(error) }
+  const result = data as RpcResult<{ updatedStates: unknown[] }>
+  if (!result?.ok) return { error: result?.error ?? 'Block failed' }
 
   revalidateProjectScreens(projectId)
-  return { data: { updatedStates: updatedStates ?? [] } }
+  return { data: { updatedStates: result.updatedStates ?? [] } }
 }
+
+export async function resetStage(
+  projectId: string,
+  viewIds: string[],
+  stage: StageType,
+) {
+  const auth = await requireWorker()
+  if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
+  const { supabase } = auth.data
+
+  const { data, error } = await supabase.rpc('reset_stage_v2_rpc', {
+    p_project_id: projectId,
+    p_view_ids: viewIds,
+    p_stage: stage,
+  })
+
+  if (error) return { error: rpcErrorToString(error) }
+  const result = data as RpcResult<{ updatedStates: unknown[] }>
+  if (!result?.ok) return { error: result?.error ?? 'Reset failed' }
+
+  revalidateProjectScreens(projectId)
+  return { data: { updatedStates: result.updatedStates ?? [] } }
+}
+
+// ── Low-frequency admin actions — left as direct writes ──────────────────────
+// unblockStage / reopenStage are admin-only and used rarely, so the multi-query
+// pattern doesn't measurably hurt UX. Keeping them direct avoids extra RPCs.
 
 export async function unblockStage(
   projectId: string,
@@ -359,7 +140,6 @@ export async function unblockStage(
   if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
   const { user, supabase } = auth.data
 
-  // Find the active round for this view
   const { data: activeRound } = await supabase
     .from('project_view_rounds')
     .select('id')
@@ -416,7 +196,6 @@ export async function reopenStage(
   if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
   const { user, supabase } = auth.data
 
-  // Find the active round for this view
   const { data: activeRound } = await supabase
     .from('project_view_rounds')
     .select('id')
@@ -491,88 +270,4 @@ export async function undoStageAction(
 
   revalidateProjectScreens(projectId)
   return { data: true }
-}
-
-export async function resetStage(
-  projectId: string,
-  viewIds: string[],
-  stage: StageType,
-) {
-  const auth = await requireWorker()
-  if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
-  const { user, profile, supabase } = auth.data
-
-  const { data: activeRounds } = await supabase
-    .from('project_view_rounds')
-    .select('id, project_view_id')
-    .eq('project_id', projectId)
-    .eq('status', 'active')
-    .in('project_view_id', viewIds)
-
-  if (!activeRounds || activeRounds.length !== viewIds.length) {
-    return { error: 'Could not find active round for all selected views' }
-  }
-
-  const roundIds = activeRounds.map(r => r.id)
-
-  // Cascade: reset the selected stage and all subsequent stages
-  const stageIdx = STAGE_ORDER.indexOf(stage)
-  const stagesToReset = STAGE_ORDER.slice(stageIdx)
-
-  const { data: currentStates } = await supabase
-    .from('view_stage_states')
-    .select('id, project_view_id, project_view_round_id, stage, status, assigned_user_id')
-    .in('project_view_round_id', roundIds)
-    .in('project_view_id', viewIds)
-    .in('stage', stagesToReset)
-
-  if (!currentStates) return { error: 'Could not fetch stage states' }
-
-  // Permission: admin can reset anything; team members can only reset stages assigned to them
-  if (profile.role !== 'admin') {
-    const primaryStates = currentStates.filter(s => s.stage === stage && s.status !== 'not_started')
-    const unauthorized = primaryStates.filter(s => s.assigned_user_id !== user.id)
-    if (unauthorized.length > 0) {
-      return { error: 'You can only reset stages assigned to you' }
-    }
-  }
-
-  const statesToReset = currentStates.filter(s => s.status !== 'not_started')
-
-  if (statesToReset.length === 0) {
-    return { error: 'All selected stages are already not started' }
-  }
-
-  const stateIds = statesToReset.map(s => s.id)
-
-  const { data: updatedStates, error: updateErr } = await supabase
-    .from('view_stage_states')
-    .update({
-      status: 'not_started' as StageStatus,
-      assigned_user_id: null,
-      started_at: null,
-      completed_at: null,
-      latest_eta_date: null,
-      latest_eta_time_window: null,
-      block_reason: null,
-      status_before_block: null,
-    })
-    .in('id', stateIds)
-    .select('id, project_view_id, project_view_round_id, stage, status, assigned_user_id, started_at, completed_at, latest_eta_date, latest_eta_time_window, block_reason')
-
-  if (updateErr) return { error: updateErr.message }
-
-  await supabase.from('stage_events').insert(
-    statesToReset.map(s => ({
-      project_id: projectId,
-      project_view_round_id: s.project_view_round_id,
-      project_view_id: s.project_view_id,
-      stage: s.stage as StageType,
-      event_type: 'stage_reset' as const,
-      actor_id: user.id,
-    }))
-  )
-
-  revalidateProjectScreens(projectId)
-  return { data: { updatedStates: updatedStates ?? [] } }
 }
