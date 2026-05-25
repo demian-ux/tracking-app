@@ -6,7 +6,7 @@ import { Icon } from '@/components/ui/Icon'
 import { SectionLabel } from '@/components/ui/SectionLabel'
 import { PageHead } from '@/components/ui/PageHead'
 import { calculateProgress } from '@/lib/utils/progress'
-import { formatDelivery, roundLabel } from '@/lib/utils/formatting'
+import { formatDelivery, deliveryLabel } from '@/lib/utils/formatting'
 import { ProjectDetailClient } from '@/components/admin/ProjectDetailClient'
 import { STAGE_LABELS, STAGE_ORDER } from '@/lib/types/app'
 import { ProjectCleanupActions } from '@/components/admin/ProjectCleanupActions'
@@ -86,7 +86,7 @@ export default async function ProjectDetailPage({ params }: Props) {
             {project.name}
           </>
         }
-        sub={`${roundLabel(project.current_round_number)} · ${project.view_count} views · ${project.delivery_count} ${project.delivery_count === 1 ? 'delivery' : 'deliveries'}`}
+        sub={`${project.view_count} views · ${project.delivery_count} ${project.delivery_count === 1 ? 'delivery' : 'deliveries'} sent`}
       />
 
       <ProjectDetailClient
@@ -118,7 +118,7 @@ export default async function ProjectDetailPage({ params }: Props) {
                       <td className="primary">
                         <div>{view.label}</div>
                         {activeRound && (
-                          <div className="text-caption text-ink-3">{roundLabel(activeRound.round_number)}</div>
+                          <div className="text-caption text-ink-3">{deliveryLabel(activeRound.round_number)} in progress</div>
                         )}
                       </td>
                       {STAGE_ORDER.map(stage => {

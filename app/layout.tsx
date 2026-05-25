@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Oaki Studio",
-  description: "Project progress tracker",
+  title: "OAKI Tracker",
+  description: "Project progress tracker for Oaki Studio",
 };
 
 export default function RootLayout({

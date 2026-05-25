@@ -5,7 +5,7 @@ import { ProgressBar } from '@/components/ui/ProgressBar'
 import { PageHead } from '@/components/ui/PageHead'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { ButtonLink } from '@/components/ui/Button'
-import { formatDelivery, roundLabel } from '@/lib/utils/formatting'
+import { formatDelivery } from '@/lib/utils/formatting'
 import { calculateProgress } from '@/lib/utils/progress'
 import type { ProjectStatus, StageStatus, TimeWindow } from '@/lib/types/database'
 import { ProjectCleanupActions } from '@/components/admin/ProjectCleanupActions'
@@ -16,8 +16,8 @@ interface ProjectListRow {
   status: ProjectStatus
   delivery_date: string | null
   delivery_time_window: TimeWindow | null
-  current_round_number: number
   view_count: number
+  delivery_count: number
   clients: { name: string } | null
   project_view_rounds: {
     id: string
@@ -33,7 +33,7 @@ export default async function ProjectsPage() {
     .from('projects')
     .select(`
       id, name, status, delivery_date, delivery_time_window,
-      current_round_number, view_count,
+      view_count, delivery_count,
       clients ( name ),
       project_view_rounds (
         id, status,
@@ -98,9 +98,11 @@ export default async function ProjectsPage() {
                   {project.name}
                 </div>
                 <div className="flex items-center gap-1.5 mt-0.5 text-caption text-ink-2">
-                  <span>{roundLabel(project.current_round_number)}</span>
-                  <span className="text-ink-faint">·</span>
                   <span>{project.view_count} views</span>
+                  <span className="text-ink-faint">·</span>
+                  <span>
+                    {project.delivery_count} {project.delivery_count === 1 ? 'delivery' : 'deliveries'} sent
+                  </span>
                   <span className="text-ink-faint">·</span>
                   <span>{formatDelivery(project.delivery_date, project.delivery_time_window)}</span>
                 </div>

@@ -46,9 +46,9 @@ export interface CreateProjectInput {
 }
 
 export const STAGE_LABELS: Record<StageType, string> = {
-  initial: 'Initial',
-  advanced: 'Advanced',
-  post_production: 'Post-prod',
+  initial: 'Assets & References',
+  advanced: '3D',
+  post_production: 'Post-production',
 }
 
 export const STAGE_ORDER: StageType[] = ['initial', 'advanced', 'post_production']
@@ -94,10 +94,6 @@ export const CLIENT_STATUS_LABELS: Record<ClientStatus, string> = {
   active:   'Active',
   inactive: 'Inactive',
   archived: 'Archived',
-}
-
-export function roundLabel(n: number): string {
-  return `Round ${String(n).padStart(2, '0')}`
 }
 
 export function viewLabel(n: number): string {

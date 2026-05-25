@@ -9,7 +9,7 @@ import { FilterChip } from '@/components/ui/FilterChip'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Icon } from '@/components/ui/Icon'
 import { calculateProgress } from '@/lib/utils/progress'
-import { formatDelivery, roundLabel } from '@/lib/utils/formatting'
+import { formatDelivery, deliveryLabel } from '@/lib/utils/formatting'
 import { STAGE_LABELS, STAGE_ORDER } from '@/lib/types/app'
 import type { StageStatus, StageType, TimeWindow } from '@/lib/types/database'
 
@@ -132,9 +132,9 @@ export function TimelineFilters({ projects, clients }: Props) {
             onChange={e => setRoundFilter(e.target.value)}
             className="h-8 w-auto text-sm"
           >
-            <option value="">All rounds</option>
+            <option value="">All deliveries</option>
             {allRounds.map(n => (
-              <option key={n} value={n}>{roundLabel(n)}</option>
+              <option key={n} value={n}>{deliveryLabel(n)}</option>
             ))}
           </Select>
         )}
@@ -171,9 +171,6 @@ export function TimelineFilters({ projects, clients }: Props) {
           const activeViews = project.project_views.filter(v => v.active)
           const activeStates = activeRounds.flatMap(r => r.view_stage_states ?? [])
           const progress = calculateProgress(activeStates)
-          const maxActiveRoundNumber = activeRounds.length > 0
-            ? Math.max(...activeRounds.map(r => r.round_number))
-            : null
           const deliveredRounds = project.project_view_rounds.filter(r => r.status === 'delivered')
 
           return (
@@ -194,10 +191,6 @@ export function TimelineFilters({ projects, clients }: Props) {
                   </div>
                   <div className="flex items-center gap-2 mt-1">
                     <Badge status={project.status} />
-                    <span className="text-caption text-ink-3">
-                      {maxActiveRoundNumber !== null ? roundLabel(maxActiveRoundNumber) : '—'}
-                    </span>
-                    <span className="text-ink-faint text-caption">·</span>
                     <span className="text-caption text-ink-3">
                       {formatDelivery(project.delivery_date, project.delivery_time_window)}
                     </span>
@@ -257,7 +250,7 @@ export function TimelineFilters({ projects, clients }: Props) {
                 </div>
               )}
 
-              {/* Round history pills — show delivered view rounds */}
+              {/* Delivery history pills — show delivered view rounds */}
               {deliveredRounds.length > 0 && (
                 <div className="px-5 py-2.5 border-t border-line flex items-center gap-2 flex-wrap">
                   {Array.from(new Set(deliveredRounds.map(r => r.round_number))).sort().map(rn => (
@@ -265,7 +258,7 @@ export function TimelineFilters({ projects, clients }: Props) {
                       key={rn}
                       className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-done-bg text-done-text"
                     >
-                      {roundLabel(rn)}
+                      {deliveryLabel(rn)}
                       <Icon name="check" size={10} />
                     </span>
                   ))}

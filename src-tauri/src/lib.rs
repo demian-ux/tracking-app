@@ -16,7 +16,7 @@ pub fn run() {
                 .expect("OAKI_WIDGET_URL is not a valid URL");
 
             WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
-                .title("Oaki Studio Widget")
+                .title("OAKI Tracker")
                 .inner_size(560.0, 720.0)
                 .min_inner_size(460.0, 600.0)
                 .resizable(true)
@@ -26,5 +26,5 @@ pub fn run() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running Oaki Studio Widget");
+        .expect("error while running OAKI Tracker");
 }

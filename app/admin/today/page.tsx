@@ -7,7 +7,7 @@ import { PageHead } from '@/components/ui/PageHead'
 import { Icon } from '@/components/ui/Icon'
 import { Avatar } from '@/components/ui/Avatar'
 import { ButtonLink } from '@/components/ui/Button'
-import { formatDelivery, roundLabel } from '@/lib/utils/formatting'
+import { formatDelivery } from '@/lib/utils/formatting'
 import { getTodayISOInTimeZone, getWeekEndISOInTimeZone } from '@/lib/utils/dates'
 import { STAGE_LABELS } from '@/lib/types/app'
 import type { ProjectStatus, StageStatus, StageType, TimeWindow } from '@/lib/types/database'
@@ -292,7 +292,7 @@ export default async function TodayPage() {
                     href={`/admin/projects/${p.id}`}
                     meta={
                       <span className="text-caption text-ink-2">
-                        {roundLabel(p.current_round_number ?? 0)}
+                        Revision
                       </span>
                     }
                   />

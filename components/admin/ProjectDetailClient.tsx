@@ -7,8 +7,8 @@ import { updateProjectDates, updateProjectStatus, updateProjectViewCount } from 
 import { unblockStage } from '@/lib/actions/stages'
 import type { Project, ProjectViewRound } from '@/lib/types/app'
 import type { TimeWindow, StageType } from '@/lib/types/database'
-import { TIME_WINDOWS, roundLabel, STAGE_LABELS, ACTIVE_PROJECT_STATUSES, PROJECT_STATUS_LABELS } from '@/lib/types/app'
-import { formatDelivery } from '@/lib/utils/formatting'
+import { TIME_WINDOWS, STAGE_LABELS, ACTIVE_PROJECT_STATUSES, PROJECT_STATUS_LABELS } from '@/lib/types/app'
+import { formatDelivery, deliveryLabel } from '@/lib/utils/formatting'
 import { ProgressBar } from '@/components/ui/ProgressBar'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -333,6 +333,29 @@ export function ProjectDetailClient({ project, viewRounds, stageStates, views, p
           Send delivery
         </SectionLabel>
         <Card>
+          {(() => {
+            const readyViewIds = viewReadiness.filter(r => r.ready).map(r => r.view.id)
+            const allReadySelected = readyViewIds.length > 0 && readyViewIds.every(id => viewsToDeliver.includes(id))
+            if (readyViewIds.length === 0) return null
+            return (
+              <div className="flex items-center justify-end mb-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (allReadySelected) {
+                      setViewsToDeliver(prev => prev.filter(id => !readyViewIds.includes(id)))
+                    } else {
+                      setViewsToDeliver(prev => Array.from(new Set([...prev, ...readyViewIds])))
+                    }
+                  }}
+                  disabled={isPending}
+                  className="text-label font-semibold uppercase text-ink-2 hover:text-ink transition-colors px-2 py-0.5 border border-line rounded-sm hover:border-line-strong"
+                >
+                  {allReadySelected ? 'Clear all' : `Select all ready (${readyViewIds.length})`}
+                </button>
+              </div>
+            )
+          })()}
           {activeRounds.length > 0 && (
             <div className="space-y-2 mb-3">
               {viewReadiness.map(({ view, ready, incomplete }) => (
@@ -414,7 +437,7 @@ export function ProjectDetailClient({ project, viewRounds, stageStates, views, p
                     <span className="text-sm text-ink">{view.label}</span>
                     {latestRound && (
                       <span className="text-caption text-ink-3">
-                        {roundLabel(latestRound.round_number)} delivered
+                        {deliveryLabel(latestRound.round_number)} sent
                       </span>
                     )}
                   </label>

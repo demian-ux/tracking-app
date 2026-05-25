@@ -1,7 +1,7 @@
 'use client'
 
 import { useRouter, usePathname } from 'next/navigation'
-import { roundLabel } from '@/lib/utils/formatting'
+import { deliveryLabel } from '@/lib/utils/formatting'
 
 interface Round {
   id: string
@@ -39,7 +39,7 @@ export function RoundSelector({
               : 'border-line text-ink-3 bg-surface hover:border-line-strong hover:text-ink-2'
           }`}
         >
-          {roundLabel(r.round_number)}
+          {deliveryLabel(r.round_number)}
           <span className="mx-1 opacity-40">·</span>
           <span className="opacity-70">{STATUS_LABELS[r.status] ?? r.status}</span>
         </button>

@@ -1,7 +1,7 @@
 [package]
 name = "oaki-widget"
-version = "0.2.0"
-description = "Oaki Studio Desktop Widget"
+version = "0.3.0"
+description = "OAKI Tracker desktop app"
 authors = ["Oaki Studio"]
 edition = "2021"
 

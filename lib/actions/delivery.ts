@@ -91,6 +91,74 @@ export async function markDeliverySent(projectId: string, viewIds: string[]) {
   return { data: true }
 }
 
+export async function undoDeliverySent(projectId: string, deliveredAt: string) {
+  const auth = await requireAdmin()
+  if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
+  const { user, supabase } = auth.data
+
+  // Find all delivered rounds at this exact timestamp for this project
+  const { data: rounds } = await supabase
+    .from('project_view_rounds')
+    .select('id, project_view_id, round_number')
+    .eq('project_id', projectId)
+    .eq('status', 'delivered')
+    .eq('delivered_at', deliveredAt)
+
+  if (!rounds || rounds.length === 0) {
+    return { error: 'No delivery found at that timestamp.' }
+  }
+
+  // Safety: refuse if any of these views has a higher-numbered round (revision
+  // work that would be orphaned).
+  for (const r of rounds) {
+    const { data: later } = await supabase
+      .from('project_view_rounds')
+      .select('id')
+      .eq('project_view_id', r.project_view_id)
+      .gt('round_number', r.round_number)
+      .limit(1)
+    if (later && later.length > 0) {
+      return {
+        error: 'Cannot undo: a revision round exists after this delivery for one or more views. Delete that revision first.',
+      }
+    }
+  }
+
+  const { error: revertErr } = await supabase
+    .from('project_view_rounds')
+    .update({ status: 'active', delivered_at: null })
+    .in('id', rounds.map(r => r.id))
+  if (revertErr) return { error: revertErr.message }
+
+  const { data: project } = await supabase
+    .from('projects')
+    .select('delivery_count, status')
+    .eq('id', projectId)
+    .single()
+
+  const newCount = Math.max(0, (project?.delivery_count ?? 0) - 1)
+  const newStatus = project?.status === 'waiting_for_feedback' ? 'active' : project?.status
+
+  const { error: projectErr } = await supabase
+    .from('projects')
+    .update({ delivery_count: newCount, status: newStatus })
+    .eq('id', projectId)
+  if (projectErr) return { error: projectErr.message }
+
+  await supabase.from('project_events').insert({
+    project_id: projectId,
+    actor_id: user.id,
+    event_type: 'delivery_undone',
+    payload: {
+      delivered_at: deliveredAt,
+      view_ids: rounds.map(r => r.project_view_id),
+    },
+  })
+
+  revalidateProjectScreens(projectId)
+  return { data: { revertedCount: rounds.length } }
+}
+
 export async function createRevisionRound(projectId: string, viewIds: string[]) {
   const auth = await requireAdmin()
   if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }

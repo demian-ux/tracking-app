@@ -15,6 +15,10 @@ export function formatDelivery(date: string | null, window: TimeWindow | null): 
   return window ? `${d} · ${window}` : d
 }
 
-export function roundLabel(n: number): string {
-  return `Round ${String(n).padStart(2, '0')}`
+/**
+ * Per-view delivery label. round_number is 0-indexed: round 0 is the first
+ * delivery, round 1 is the second (first revision), etc.
+ */
+export function deliveryLabel(roundNumber: number): string {
+  return `Delivery ${roundNumber + 1}`
 }

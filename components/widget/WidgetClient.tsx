@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useTransition, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { startStage, finishStage, blockStage, ensureProjectWorkflow, undoStageAction, resetStage } from '@/lib/actions/stages'
 import type { StageType, TimeWindow } from '@/lib/types/database'
-import { STAGE_LABELS, STAGE_ORDER, TIME_WINDOWS, BLOCK_REASONS, roundLabel } from '@/lib/types/app'
+import { STAGE_LABELS, STAGE_ORDER, TIME_WINDOWS, BLOCK_REASONS } from '@/lib/types/app'
 import { formatDelivery } from '@/lib/utils/formatting'
 import { ViewCell, type ViewState, type View } from './ViewCell'
 import { SectionLabel } from '@/components/ui/SectionLabel'
@@ -53,13 +53,6 @@ interface UndoState {
   msg: string
   restores: { id: string; status: string; assigned_user_id: string | null }[]
   timerId: ReturnType<typeof setTimeout>
-}
-
-/** Widget-only stage labels (admin keeps Initial / Advanced / Post-prod). */
-const STAGE_SEG_LABELS: Record<StageType, string> = {
-  initial: 'Assets & References',
-  advanced: '3D',
-  post_production: 'Post-production',
 }
 
 const FILTER_LABELS: Record<ViewFilter, string> = {
@@ -256,7 +249,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
     })
     if (blocked.length === 0) return null
     const labels = blocked.map(vid => views.find(v => v.id === vid)?.label ?? vid)
-    return `Finish ${STAGE_SEG_LABELS[prev]} first for: ${labels.join(', ')}`
+    return `Finish ${STAGE_LABELS[prev]} first for: ${labels.join(', ')}`
   })()
 
   // ── Quick filter ────────────────────────────────────────────────────────────
@@ -656,8 +649,6 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                 <Icon name="calendar" size={11} className="text-ink-3" />
                 <span>{formatDelivery(project.delivery_date, project.delivery_time_window)}</span>
                 <span className="text-ink-faint">·</span>
-                <span>{roundLabel(project.current_round_number)}</span>
-                <span className="text-ink-faint">·</span>
                 <span>{project.view_count} views</span>
               </div>
               <ProgressBar value={progress} />
@@ -689,7 +680,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                         : 'text-ink-2 hover:text-ink',
                     ].join(' ')}
                   >
-                    {STAGE_SEG_LABELS[s]}
+                    {STAGE_LABELS[s]}
                   </button>
                 ))}
               </div>
@@ -780,7 +771,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                       selected={selectedViewIds.includes(view.id)}
                       conflict={conflictViewIds.includes(view.id)}
                       prereqBlocked={prereqBlocked}
-                      prevStageName={prevStage ? STAGE_SEG_LABELS[prevStage] : null}
+                      prevStageName={prevStage ? STAGE_LABELS[prevStage] : null}
                       userId={userId}
                       assignee={assignee}
                       pending={pendingViewIds.includes(view.id)}
@@ -853,7 +844,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                     <>
                       <span className="font-medium text-ink">All views</span>
                       <span className="text-ink-faint">·</span>
-                      <span className="text-ink-2">{STAGE_SEG_LABELS.initial}</span>
+                      <span className="text-ink-2">{STAGE_LABELS.initial}</span>
                     </>
                   ) : (
                     <>
@@ -863,7 +854,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                       {stage && (
                         <>
                           <span className="text-ink-faint">·</span>
-                          <span className="text-ink-2">{STAGE_SEG_LABELS[stage as StageType]}</span>
+                          <span className="text-ink-2">{STAGE_LABELS[stage as StageType]}</span>
                         </>
                       )}
                     </>
