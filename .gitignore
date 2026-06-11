@@ -42,3 +42,6 @@ next-env.d.ts
 
 # Rust / Tauri build artifacts
 src-tauri/target/
+
+# supabase cli
+supabase/.temp/
