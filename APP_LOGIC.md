@@ -1,6 +1,6 @@
 # Oaki Tracker — App Logic Reference
 
-> Generated 2026-05-18. Intended as a full-fidelity reference for auditing correctness of the app's logic.
+> Originally generated 2026-05-18; rewritten 2026-06-10 to reflect the per-view-round schema (migration 018), the v2 RPC architecture (022, 024), and current server actions. Intended as a full-fidelity reference for auditing correctness of the app's logic.
 
 ---
 
@@ -10,12 +10,13 @@
 2. [Database Schema](#2-database-schema)
 3. [Enums](#3-enums)
 4. [Row Level Security (RLS)](#4-row-level-security-rls)
-5. [Migration History](#5-migration-history)
-6. [TypeScript Types](#6-typescript-types)
-7. [Server Actions](#7-server-actions)
-8. [Widget Flow (Team Member)](#8-widget-flow-team-member)
-9. [Admin Flow](#9-admin-flow)
-10. [Known Invariants & Edge Cases](#10-known-invariants--edge-cases)
+5. [RPC Architecture](#5-rpc-architecture)
+6. [Migration History](#6-migration-history)
+7. [TypeScript Types](#7-typescript-types)
+8. [Server Actions](#8-server-actions)
+9. [Widget Flow (Team Member)](#9-widget-flow-team-member)
+10. [Admin Flow](#10-admin-flow)
+11. [Known Invariants & Edge Cases](#11-known-invariants--edge-cases)
 
 ---
 
@@ -24,18 +25,22 @@
 - **Framework**: Next.js 16.2.6 App Router, TypeScript
 - **Database**: Supabase (PostgreSQL), with RLS enabled on every table
 - **Auth**: Supabase Auth; `public.users` rows created on first login via `ensureUserProfile()`
+- **Route protection**: `proxy.ts` at the repo root. **This is Next.js 16's renamed middleware convention** (`middleware.ts` → `proxy.ts`, exported function `proxy`). It requires auth on all non-`/auth` routes and gates `/admin/*` on the `admin` role. Do not mistake it for dead code.
 - **Styling**: Tailwind v4 CSS-first, dark theme tokens
 - **Roles**: `admin`, `team_member`, `client` (only admin and team_member are used in practice)
+- **Desktop**: Tauri 2 shell (`src-tauri/`) that loads the hosted `/app/widget` URL in a WebView. The URL is baked in at build time via `OAKI_WIDGET_URL`; release builds assert it is HTTPS.
 
 ### Route structure
 
 | Path | Access | Purpose |
 |------|--------|---------|
-| `/app/widget` | All authenticated | Team widget — start/finish/block stages |
+| `/app/widget` | All authenticated | Team widget — start/finish/block/reset stages |
 | `/admin/projects` | Admin | List all non-archived projects |
 | `/admin/projects/new` | Admin | Create project form |
-| `/admin/projects/[id]` | Admin | Project detail: status, rounds, stage grid |
+| `/admin/projects/[id]` | Admin | Project detail: status, per-view rounds, stage grid, delivery |
 | `/admin/today` | Admin | Dashboard: blocked stages, ETAs due today, due this week, feedback, revisions |
+| `/admin/deliveries` | Admin | Delivery history with undo |
+| `/admin/timeline` | Admin | Timeline view |
 | `/admin/clients` | Admin | Client management |
 | `/auth/login` | Public | Login |
 
@@ -59,12 +64,8 @@ Rows are created by the app on first login (`ensureUserProfile`), not by a DB tr
 |--------|------|-------|
 | id | UUID PK | |
 | name | TEXT NOT NULL | |
-| contact_name | TEXT | |
-| contact_email | TEXT | |
-| phone | TEXT | |
-| website | TEXT | |
-| notes | TEXT | |
-| status | ClientStatus NOT NULL DEFAULT 'active' | 'active' \| 'inactive' \| 'archived' |
+| contact_name / contact_email / phone / website / notes | TEXT | |
+| status | client_status NOT NULL DEFAULT 'active' | 'active' \| 'inactive' \| 'archived' |
 | created_at / updated_at | TIMESTAMPTZ | |
 
 ### `projects`
@@ -74,14 +75,12 @@ Rows are created by the app on first login (`ensureUserProfile`), not by a DB tr
 | client_id | UUID → clients | ON DELETE SET NULL |
 | name | TEXT NOT NULL | |
 | notes | TEXT | Added in migration 010 |
-| status | project_status NOT NULL DEFAULT 'not_started' | See enum below |
+| status | project_status NOT NULL DEFAULT 'not_started' | App always sets canonical values; see enum below |
 | delivery_date | DATE | |
 | delivery_time_window | time_window | |
-| ~~public_eta_date~~ | ~~DATE~~ | Removed in migration 010 (column still exists in DB, removed from TS types) |
-| ~~public_eta_time_window~~ | ~~time_window~~ | Same as above |
 | view_count | INT NOT NULL DEFAULT 1 CHECK >= 1 | |
-| current_round_number | INT NOT NULL DEFAULT 0 | Tracks the latest round number |
-| delivery_count | INT NOT NULL DEFAULT 0 | Incremented on each `markDeliverySent` |
+| current_round_number | INT NOT NULL DEFAULT 0 | **Legacy / effectively dead post-018.** Rounds are per-view now (`project_views.current_round_number` + `project_view_rounds`). Kept only for backward compat; no active code reads it. Candidate for removal. |
+| delivery_count | INT NOT NULL DEFAULT 0 | Incremented by `mark_delivery_sent_v2_rpc`, decremented by undo. Advisory — the admin detail page derives delivery history from `project_view_rounds.delivered_at` instead. |
 | created_at / updated_at | TIMESTAMPTZ | `updated_at` auto-set by trigger |
 
 ### `project_views`
@@ -91,116 +90,83 @@ Rows are created by the app on first login (`ensureUserProfile`), not by a DB tr
 | project_id | UUID → projects ON DELETE CASCADE | |
 | number | INT NOT NULL | 1-based |
 | label | TEXT NOT NULL | "View 01", "View 02", etc. |
-| active | BOOLEAN NOT NULL DEFAULT TRUE | |
+| active | BOOLEAN NOT NULL DEFAULT TRUE | Deactivated views are excluded from the workflow |
+| current_round_number | INT NOT NULL DEFAULT 0 | Per-view round counter (added in 018) |
 | created_at | TIMESTAMPTZ | |
 
 UNIQUE constraint: `(project_id, number)`
 
-### `delivery_rounds`
+### `project_view_rounds` (replaces `delivery_rounds`, migration 018)
+
+**Each view has its own round sequence.** View 01 can be delivered (its round 0 `delivered`) while View 02's round 0 is still `active`. Delivery, undo, and revision rounds are all per-view.
+
 | Column | Type | Notes |
 |--------|------|-------|
 | id | UUID PK | |
 | project_id | UUID → projects ON DELETE CASCADE | |
-| round_number | INT NOT NULL | 0-based (Round 00, Round 01, …) |
-| status | round_status NOT NULL DEFAULT 'active' | |
-| started_at | TIMESTAMPTZ | |
-| completed_at | TIMESTAMPTZ | |
-| delivered_at | TIMESTAMPTZ | Set by `markDeliverySent` |
+| project_view_id | UUID → project_views ON DELETE CASCADE | |
+| round_number | INT NOT NULL DEFAULT 0 | 0-based per view |
+| status | round_status NOT NULL DEFAULT 'active' | 'active' \| 'delivered' \| 'revision_requested' (+ legacy 'ready_for_admin_review') |
+| delivered_at | TIMESTAMPTZ | Set by `mark_delivery_sent_v2_rpc`; one timestamp groups a delivery batch |
 | created_at | TIMESTAMPTZ | |
 
-UNIQUE constraint: `(project_id, round_number)`
+UNIQUE constraint: `(project_view_id, round_number)`
+
+The old project-wide `delivery_rounds` table was **dropped in migration 018**.
 
 ### `view_stage_states`
-One row per `(delivery_round, project_view, stage)` triplet.
+One row per `(project_view_round, project_view, stage)` triplet.
 
 | Column | Type | Notes |
 |--------|------|-------|
 | id | UUID PK | |
 | project_id | UUID → projects ON DELETE CASCADE | Denormalized for efficient RLS queries |
-| delivery_round_id | UUID → delivery_rounds ON DELETE CASCADE | |
+| project_view_round_id | UUID → project_view_rounds ON DELETE CASCADE | NOT NULL (018) |
 | project_view_id | UUID → project_views ON DELETE CASCADE | |
-| stage | stage_type NOT NULL | 'initial' \| 'advanced' \| 'post_production' |
+| stage | stage_type NOT NULL | |
 | status | stage_status NOT NULL DEFAULT 'not_started' | |
-| assigned_user_id | UUID → users ON DELETE SET NULL | Set when a team member starts the stage |
-| started_at | TIMESTAMPTZ | |
-| completed_at | TIMESTAMPTZ | |
-| latest_eta_date | DATE | |
+| assigned_user_id | UUID → users ON DELETE SET NULL | Set when a team member starts the stage; cleared on finish/reset |
+| started_at / completed_at | TIMESTAMPTZ | |
+| latest_eta_date | DATE | Cleared on finish/reset |
 | latest_eta_time_window | time_window | |
 | block_reason | TEXT | |
+| status_before_block | stage_status | Saved when blocking (014); restored on unblock |
 | updated_at | TIMESTAMPTZ | Auto-set by trigger |
 
-UNIQUE constraint: `(delivery_round_id, project_view_id, stage)`
+UNIQUE constraint includes `(project_view_round_id, project_view_id, stage)`.
 
 ### `stage_events` (append-only)
-| Column | Type | Notes |
-|--------|------|-------|
-| id | UUID PK | |
-| project_id | UUID | Denormalized |
-| delivery_round_id | UUID | |
-| project_view_id | UUID | |
-| stage | stage_type | |
-| event_type | stage_event_type | |
-| actor_id | UUID → users | |
-| eta_date / eta_time_window | | Set on stage_started / stage_eta_changed |
-| created_at | TIMESTAMPTZ | |
+`id, project_id, project_view_round_id (NOT NULL), project_view_id, stage, event_type, actor_id, eta_date, eta_time_window, created_at`
 
 ### `project_events` (append-only)
-| Column | Type | Notes |
-|--------|------|-------|
-| id | UUID PK | |
-| project_id | UUID | |
-| actor_id | UUID → users | |
-| event_type | project_event_type | |
-| payload | JSONB | Structured context per event type |
-| created_at | TIMESTAMPTZ | |
-
-### Indexes
-- `projects(status)` — for status-filtered queries
-- `project_views(project_id)`
-- `delivery_rounds(project_id)`
-- `view_stage_states(project_id)`
-- `view_stage_states(delivery_round_id)`
-- `stage_events(project_id)`
-- `project_events(project_id)`
-
-### Triggers
-- `set_updated_at_projects` — BEFORE UPDATE on `projects`, sets `updated_at = NOW()`
-- `set_updated_at_view_stage_states` — BEFORE UPDATE on `view_stage_states`
+`id, project_id, actor_id, event_type, payload JSONB, created_at`
 
 ---
 
 ## 3. Enums
 
-### `project_status` (PostgreSQL enum)
-**Canonical values (post-migration 009/010):**
-- `active` — normal working state
-- `waiting_for_feedback` — delivery sent, awaiting client response
-- `delivered` — final delivery accepted (manual admin set)
-- `revision` — revision round in progress
-- `archived` — hidden from widget and most queries
+### `project_status`
+**Canonical (the app only sets these):** `active`, `waiting_for_feedback`, `delivered`, `revision`, `archived`
 
-**Legacy values (still exist in DB enum for backward compat):**
-`not_started`, `in_progress`, `waiting_for_client`, `ready_to_deliver`, `revision_in_progress`, `waiting_for_info`, `ready_to_start`, `in_production`
+**Legacy (still in the enum, backfilled to canonical by 009/010):** `not_started`, `in_progress`, `waiting_for_client`, `ready_to_deliver`, `revision_in_progress`, `waiting_for_info`, `ready_to_start`, `in_production`
 
 ### `stage_type`
-`initial` → `advanced` → `post_production` (order matters for warning logic)
+`initial` → `advanced` → `post_production`. Display labels (lib/types/app.ts): "Assets & References", "3D", "Post-production". Order is enforced for team members by `start_stage_v2_rpc` (previous stage must be `done`); admins are exempt.
 
 ### `stage_status`
 `not_started` | `in_progress` | `done` | `blocked` | `reopened`
 
 ### `round_status`
-`active` | `delivered` | `revision_requested` | `ready_for_admin_review`
-
-Note: `ready_for_admin_review` is referenced in `ensureProjectWorkflow` as a valid "active-ish" round status but no longer set by any action (legacy). `delivered` is set by `markDeliverySent`.
+`active` | `delivered` | `revision_requested` | `ready_for_admin_review` (legacy, no longer set; repaired to `active` by `ensure_workflow_v2_rpc`)
 
 ### `time_window`
 `Midday` | `Afternoon` | `EOD`
 
 ### `stage_event_type`
-`stage_started` | `stage_eta_changed` | `stage_finished` | `stage_reopened` | `stage_blocked` | `stage_unblocked`
+`stage_started` | `stage_eta_changed` | `stage_finished` | `stage_reopened` | `stage_blocked` | `stage_unblocked` | `stage_reset` (added 019)
 
 ### `project_event_type`
-`project_created` | `delivery_date_changed` | `public_eta_changed` | `view_count_changed` | `delivery_marked_sent` | `revision_round_created` | `project_archived` | `information_received` | `information_completed` | `project_status_changed` | `admin_review_approved`
+`project_created` | `delivery_date_changed` | `public_eta_changed` | `view_count_changed` | `delivery_marked_sent` | `revision_round_created` | `delivery_undone` (added 023) | `project_archived` | `information_received` | `information_completed` | `project_status_changed` | `admin_review_approved`
 
 ### `user_role`
 `admin` | `team_member` | `client`
@@ -209,483 +175,236 @@ Note: `ready_for_admin_review` is referenced in `ensureProjectWorkflow` as a val
 
 ## 4. Row Level Security (RLS)
 
-RLS is enabled on all 8 tables.
+RLS is enabled on all tables. Helper:
 
-### Helper function
 ```sql
 CREATE OR REPLACE FUNCTION current_user_role()
 RETURNS user_role AS $$
   SELECT role FROM public.users WHERE id = auth.uid()
 $$ LANGUAGE sql SECURITY DEFINER STABLE;
 ```
-SECURITY DEFINER is required because `public.users` itself has RLS — this function bypasses it to read the calling user's own role.
 
 ### Policy summary by table
 
-**users**
-- Any authenticated user: SELECT their own row (`id = auth.uid()`)
-- Admin: SELECT all rows
-- Admin: ALL operations
+**users** — own-row SELECT for everyone; admin ALL.
 
-**clients**
-- Admin: ALL
-- Team member + admin: SELECT
+**clients** — admin ALL; team SELECT.
 
-**projects**
-- Admin: ALL
-- Team member: SELECT where `status != 'archived'`
+**projects** — admin ALL; team SELECT where `status != 'archived'`.
 
-**project_views**
-- Admin: ALL
-- Team member + admin: SELECT
+**project_views** — admin ALL; team SELECT.
 
-**delivery_rounds**
-- Admin: ALL
-- Team member + admin: SELECT
-- Team member: INSERT (added in migration 011, for `ensureProjectWorkflow` repair)
+**project_view_rounds** — admin ALL; team SELECT. **Team INSERT/UPDATE policies from 018 were dropped in migration 024** — all round mutations go through SECURITY DEFINER RPCs (which bypass RLS) or admin policies. Team members cannot write rounds directly.
 
-**view_stage_states**
-- Admin: ALL
-- Team member: SELECT (all states — needed for conflict detection in widget)
-- Team member: UPDATE (start/finish/block stages)
-- Team member: INSERT (added in migration 011, for `ensureProjectWorkflow` repair)
+**view_stage_states** — admin ALL; team SELECT (all states — needed for widget conflict detection); team UPDATE/INSERT (used by the widget's `undoStageAction` direct writes and legacy repair paths; all other mutations go through RPCs).
 
-**stage_events**
-- Admin: ALL
-- Team member: SELECT
-- Team member: INSERT own events only (`actor_id = auth.uid()`)
+**stage_events** — admin ALL; team SELECT; team INSERT own events only (`actor_id = auth.uid()`).
 
-**project_events**
-- Admin: ALL
-- Team member: SELECT
+**project_events** — admin ALL; team SELECT.
 
 ---
 
-## 5. Migration History
+## 5. RPC Architecture
+
+All workflow mutations are single-round-trip `SECURITY DEFINER` PL/pgSQL functions with `SET search_path = public`, returning JSONB `{ ok: true, ... }` or `{ ok: false, error, ... }`. Each re-checks the caller's role from `public.users` at the top. Grants: `REVOKE FROM PUBLIC` + `GRANT EXECUTE TO authenticated`.
+
+### Stage RPCs (migration 022)
+
+| RPC | Caller | Behavior |
+|-----|--------|----------|
+| `ensure_workflow_v2_rpc(project_id)` | admin/team | Idempotent pre-flight: repair-reactivates the latest non-active round per view (**but never a `delivered` round** — changed in 024), creates round 0 for views with no rounds, fills missing `view_stage_states`. Returns active rounds + states. |
+| `start_stage_v2_rpc(project_id, view_ids[], stage, eta_date?, eta_window?)` | admin/team | Sequential-stage enforcement for team; conflict detection (`in_progress` by someone else → `{ error: 'conflict', conflictingViewIds }`); atomic state update + `stage_started` events in one CTE. |
+| `finish_stage_v2_rpc(project_id, view_ids[], stage)` | admin/team | Only `in_progress` states; team can only finish their own. Clears assignee + ETA, sets `completed_at`. |
+| `block_stage_v2_rpc(project_id, view_ids[], stage, reason)` | admin/team | Only `in_progress`, own (or admin). Saves `status_before_block`. |
+| `reset_stage_v2_rpc(project_id, view_ids[], stage)` | admin/team | Cascade-resets the chosen stage and all later stages to `not_started`; team can only reset stages assigned to them. Logs `stage_reset`. |
+
+### Delivery RPCs (migration 024)
+
+| RPC | Caller | Behavior |
+|-----|--------|----------|
+| `mark_delivery_sent_v2_rpc(project_id, view_ids[])` | admin | Locks the selected views' active rounds `FOR UPDATE`, verifies every stage is `done` (else returns `{ error: 'incomplete', incomplete: [...] }`), marks rounds `delivered` with one shared `delivered_at` timestamp, sets project `waiting_for_feedback`, increments `delivery_count`, logs `delivery_marked_sent`. Fully transactional. |
+| `undo_delivery_sent_v2_rpc(project_id, delivered_at)` | admin | Locks the delivered rounds matching `delivered_at` and all later rounds of the same views. Refuses if any later (revision) round has started work. Deletes clean later rounds, reverts rounds to `active`, resyncs `project_views.current_round_number`, sets project `active`, decrements `delivery_count`, logs `delivery_undone`. |
+| `create_revision_round_v2_rpc(project_id, view_ids[])` | admin | Requires project status `waiting_for_feedback`/`delivered` and no active round on the selected views. Inserts `max(round_number)+1` rounds + fresh stage states, updates `project_views.current_round_number`, sets project `revision`, logs `revision_round_created`. Single statement chain (CTE) — atomic. |
+
+### Other
+
+- `check_data_integrity_rpc` (017/021) — admin diagnostics.
+- v1 RPCs from migration 015 that referenced `delivery_rounds` were dropped in 022. The 015 GRANT/REVOKE for `create_project_workflow_rpc` used a wrong 6-parameter signature and silently failed; migration 024 re-applies it with the correct signature (guarded).
+
+---
+
+## 6. Migration History
 
 | File | Description |
 |------|-------------|
-| 001_initial_schema.sql | All tables, enums, indexes, triggers |
-| 002_rls.sql | RLS policies and `current_user_role()` function |
-| 003_* | (Not read — likely clients or users additions) |
-| 004_* | Added legacy statuses to project_status enum |
-| 005_* | User profile migration; profile row seeding |
-| 006_* | Unknown |
-| 007_backfill_production_statuses.sql | Backfills legacy status values. Uses `status::text` cast to avoid PostgreSQL enum parse-time validation. Wrapped in `DO $$ BEGIN IF EXISTS (... 'in_production' in enum) THEN ... END IF; END $$` guard so it no-ops if migration 004 was skipped. |
-| 008_* | Unknown |
-| 009_simplified_statuses.sql | Adds `active` and `revision` to the project_status enum (idempotent: `ADD VALUE IF NOT EXISTS`) |
-| 010_backfill_simplified_statuses.sql | Adds `notes` column to projects. Collapses all legacy statuses to canonical values using `status::text IN (...)` cast. Maps: `not_started/in_progress/waiting_for_info/ready_to_start/in_production/ready_to_deliver` → `active`; `revision_in_progress` → `revision`; `waiting_for_client` → `waiting_for_feedback`. Also drops `public_eta_date` and `public_eta_time_window` columns. |
-| 011_team_workflow_repair_policies.sql | Grants INSERT on `delivery_rounds` and `view_stage_states` to team_member role (needed for `ensureProjectWorkflow` auto-repair). |
+| 001 | All tables (incl. project-wide `delivery_rounds`), enums, indexes, triggers |
+| 002 | RLS policies + `current_user_role()` |
+| 003 | Profile self-insert policy |
+| 004 | Legacy production statuses; `ready_for_admin_review` round status |
+| 005 | Auth trigger |
+| 006 / 008 | Clients table + column guards |
+| 007 | Backfill legacy production statuses (uses `status::text` cast — see gotcha below) |
+| 009 / 010 | Canonical statuses (`active`, `revision`); backfill; add `projects.notes`; drop `public_eta_*` columns |
+| 011 | Team INSERT policies for workflow repair (largely superseded) |
+| 012 | Drop public ETA columns (final) |
+| 013 | Repair multiple active rounds |
+| 014 | `status_before_block` |
+| 015 | v1 RPCs (project-wide rounds) — **dropped in 022**; contains the bad GRANT signature fixed in 024 |
+| 016 | Restrict direct-write RLS |
+| 017 / 021 | Integrity-check RPC (v1, v2) |
+| 018 | **Per-view rounds**: drop `delivery_rounds`, create `project_view_rounds`, re-point `view_stage_states`/`stage_events`, per-view `current_round_number` |
+| 019 | `stage_reset` event type |
+| 020 | Indexes |
+| 022 | v2 stage RPCs (`ensure/start/finish/block/reset_stage_v2_rpc`); drop v1 RPCs |
+| 023 | `delivery_undone` event type |
+| 024 | **Transactional delivery RPCs** (`mark_delivery_sent_v2_rpc`, `undo_delivery_sent_v2_rpc`, `create_revision_round_v2_rpc`); `ensure_workflow_v2_rpc` no longer reactivates delivered rounds; fix 015 grant signature; drop team INSERT/UPDATE on `project_view_rounds` |
 
-**Critical PostgreSQL gotcha documented during development:** Enum literals in WHERE clauses are validated at parse time, before execution. `WHERE status IN ('waiting_for_info', ...)` will fail with an error if any listed value does not exist in the enum, even if no rows have that value. Fix: use `WHERE status::text IN (...)` to cast the column to text first.
+**Critical PostgreSQL gotcha:** enum literals in WHERE clauses are validated at parse time. `WHERE status IN ('waiting_for_info', ...)` fails if any listed value doesn't exist in the enum, even with zero matching rows. Fix: `WHERE status::text IN (...)`.
 
 ---
 
-## 6. TypeScript Types
+## 7. TypeScript Types
 
 ### `lib/types/database.ts`
-
-Manually maintained type definitions (not auto-generated from Supabase).
-
-**ProjectStatus** — canonical values first, legacy values appended for backward compat:
-```ts
-type ProjectStatus =
-  | 'active' | 'waiting_for_feedback' | 'delivered' | 'revision' | 'archived'
-  // legacy:
-  | 'waiting_for_info' | 'ready_to_start' | 'in_production'
-  | 'ready_to_deliver' | 'revision_in_progress' | 'not_started'
-  | 'in_progress' | 'waiting_for_client'
-```
-
-Note: `public_eta_date` and `public_eta_time_window` are removed from the `projects` Row/Insert/Update types even though they may still exist as columns in the DB (dropped in migration 010). The `block_reason` field on `view_stage_states` is in the TS type but was added as a column in a later migration (not in 001).
+Manually maintained (not auto-generated; the Supabase clients use `type DB = any` — generating real types via `supabase gen types typescript` is an open TODO requiring a CLI access token).
 
 ### `lib/types/app.ts`
 
-Higher-level types and constants derived from `database.ts`:
-
-- `STAGE_ORDER: StageType[] = ['initial', 'advanced', 'post_production']`
-- `STAGE_LABELS` — display labels for each stage type
-- `TIME_WINDOWS: TimeWindow[] = ['Midday', 'Afternoon', 'EOD']`
+- `STAGE_ORDER = ['initial', 'advanced', 'post_production']`
+- `STAGE_LABELS = { initial: 'Assets & References', advanced: '3D', post_production: 'Post-production' }`
+- `TIME_WINDOWS = ['Midday', 'Afternoon', 'EOD']`
 - `ACTIVE_PROJECT_STATUSES = ['active', 'waiting_for_feedback', 'delivered', 'revision']`
-- `PROJECT_STATUS_LABELS` — maps all canonical + legacy values to display strings; legacy values map to nearest canonical label
-- `BLOCK_REASONS` — preset list: 'Waiting for assets', 'Waiting for approval', 'Technical issue', 'Awaiting client feedback', 'Scope unclear', 'Other'
-- `roundLabel(n)` — `Round ${n.padStart(2, '0')}` e.g. "Round 00", "Round 01"
-- `viewLabel(n)` — `View ${n.padStart(2, '0')}` e.g. "View 01"
+- `PROJECT_STATUS_LABELS` — canonical + legacy → display strings
+- `BLOCK_REASONS` — preset list ('Waiting for assets', …, 'Other')
+- `viewLabel(n)` — "View 01" etc.
 
-**CreateProjectInput:**
+**Inputs (no `roundId` anywhere — the RPCs resolve active rounds per view):**
 ```ts
-interface CreateProjectInput {
-  name: string
-  clientId: string | null
-  deliveryDate: string | null
-  deliveryTimeWindow: TimeWindow | null
-  viewCount: number
-  notes?: string | null
-}
+interface StartStageInput  { projectId; viewIds: string[]; stage; etaDate: string|null; etaTimeWindow: TimeWindow|null }
+interface FinishStageInput { projectId; viewIds: string[]; stage }
+interface CreateProjectInput { name; clientId: string|null; deliveryDate: string|null; deliveryTimeWindow: TimeWindow|null; viewCount: number }
 ```
 
 ---
 
-## 7. Server Actions
+## 8. Server Actions
 
-All actions are `'use server'` Next.js Server Actions. All check authentication first (`supabase.auth.getUser()`). Admin-only actions additionally check `users.role === 'admin'`.
-
-### `lib/actions/projects.ts`
-
-#### `createProject(input: CreateProjectInput)`
-**Auth**: Admin only.
-
-Steps:
-1. Insert into `projects` with `status: 'active'`
-2. Insert `view_count` rows into `project_views` (labeled "View 01", "View 02", …)
-3. Insert `delivery_rounds` row: `round_number: 0, status: 'active'`
-4. Insert `view_stage_states`: all `views × STAGE_ORDER` combinations, `status: 'not_started'`
-5. Log `project_created` event
-6. `revalidatePath('/admin/projects')`
-
-Returns: `{ data: project }` or `{ error: string }`
-
-#### `updateProjectDates(projectId, { deliveryDate, deliveryTimeWindow })`
-**Auth**: Admin only.
-
-Updates `delivery_date` and `delivery_time_window` on the project. Logs `delivery_date_changed` event if `deliveryDate` is provided (even if null — logs the clear).
-
-`revalidatePath('/admin/projects/[id]')`
-
-#### `archiveProject(projectId)`
-**Auth**: Admin only.
-
-Sets `status = 'archived'`. Logs `project_archived`. Revalidates `/admin/projects`, `/admin/projects/[id]`, `/app/widget`.
-
-#### `deleteProjectPermanently(projectId)`
-**Auth**: Admin only. No typing confirmation required.
-
-Steps (sequential, stops on first error):
-1. Pre-log `project_archived` event with `{ action: 'delete_permanently_requested', project_name }`
-2. Delete `stage_events` WHERE `project_id`
-3. Delete `project_events` WHERE `project_id`
-4. Delete `view_stage_states` WHERE `project_id`
-5. Delete `delivery_rounds` WHERE `project_id`
-6. Delete `project_views` WHERE `project_id`
-7. Delete `projects` WHERE `id`
-
-Note: The event log step (step 1) will itself be deleted in step 3. The cascade on `projects` (ON DELETE CASCADE on child tables) would handle cleanup, but the action deletes children explicitly in order to surface errors from each step.
-
-`revalidatePath('/admin/projects')`, `/admin/projects/[id]`, `/app/widget`
-
-#### `updateProjectStatus(projectId, status)`
-**Auth**: Admin only.
-
-Sets `status` to any value. Logs `project_status_changed`. Revalidates `/admin/projects`, `/admin/projects/[id]`, `/admin/today`.
-
----
+All actions are `'use server'`, auth-checked via `requireAdmin()` / `requireWorker()` (admin or team_member) from `lib/actions/auth.ts`. Most are thin wrappers around the RPCs above.
 
 ### `lib/actions/stages.ts`
+- `ensureProjectWorkflow(projectId)` → `ensure_workflow_v2_rpc`
+- `startStage(input)` → `start_stage_v2_rpc`; maps `{ error: 'conflict' }` to `{ error: 'conflict', conflictingViewIds }`
+- `finishStage(input)` → `finish_stage_v2_rpc`
+- `blockStage(projectId, viewIds, stage, reason)` → `block_stage_v2_rpc`
+- `resetStage(projectId, viewIds, stage)` → `reset_stage_v2_rpc`
+- `unblockStage(projectId, viewId, stage)` — **admin-only direct writes** (find active round → check `blocked` → restore `status_before_block` → log `stage_unblocked`). Low-frequency, kept off-RPC intentionally.
+- `reopenStage(projectId, viewId, stage)` — admin-only direct writes (`done` → `reopened`, log `stage_reopened`).
+- `undoStageAction(projectId, restores[])` — worker direct writes restoring snapshotted states (powers the widget's 12-second undo toast). Relies on team UPDATE policy on `view_stage_states`.
 
-#### `ensureProjectWorkflow(projectId)` — called by both widget and `startStage`
-**Auth**: Any authenticated user (team_member or admin).
+### `lib/actions/delivery.ts` (rewritten for migration 024)
+- `markDeliverySent(projectId, viewIds[])` → `mark_delivery_sent_v2_rpc`; on `{ error: 'incomplete' }` maps the payload to `IncompleteItem[]` (`viewLabel`, `stageLabel`, `status`)
+- `undoDeliverySent(projectId, deliveredAt)` → `undo_delivery_sent_v2_rpc`; returns `{ revertedCount, revisionRoundsRemoved }`
+- `createRevisionRound(projectId, viewIds[])` → `create_revision_round_v2_rpc`
 
-Purpose: Guarantee a usable active round + full set of `view_stage_states` exists, auto-repairing if rows are missing.
-
-Steps:
-1. Fetch project — error if not found or `status === 'archived'`
-2. Fetch active views (`active = true`) — error if none
-3. Query `delivery_rounds` where `status IN ('active', 'ready_for_admin_review')`, ordered by `round_number DESC` — take the first
-4. If no round found: INSERT a new `delivery_rounds` row with `round_number = project.current_round_number, status: 'active'`
-5. Fetch all `view_stage_states` for the round
-6. Compute missing `(view_id, stage)` pairs — INSERT any missing states with `status: 'not_started'`
-7. Re-fetch all states for the round
-8. Return `{ data: { round, states } }`
-
-**RLS requirement**: team_member needs INSERT on `delivery_rounds` and `view_stage_states` — added by migration 011.
-
-#### `startStage(input: StartStageInput)`
-**Auth**: Any authenticated user.
-
-`StartStageInput`: `{ projectId, roundId, viewIds[], stage, etaDate, etaTimeWindow }`
-
-Steps:
-1. Call `ensureProjectWorkflow(projectId)` — return its error if any
-2. Check for conflicts: any `view_stage_states` with `status = 'in_progress'` for the same `(roundId, viewIds, stage)`
-   - If conflicts: return `{ error: 'conflict', conflictingViewIds: [...] }`
-3. UPDATE `view_stage_states` SET `status='in_progress', assigned_user_id=user.id, started_at=now, latest_eta_date, latest_eta_time_window, block_reason=null` WHERE `(delivery_round_id, project_view_id IN viewIds, stage)`
-4. Verify: re-fetch updated rows and check count matches `viewIds.length` — error if short
-5. Insert `stage_started` events for each viewId
-6. Revalidate `/app/widget`, `/admin/projects/[id]`
-
-**Note**: ETA is optional. Empty string `etaDate` is sent as `null`.
-
-#### `finishStage(input: FinishStageInput)`
-**Auth**: Any authenticated user.
-
-`FinishStageInput`: `{ projectId, roundId, viewIds[], stage }`
-
-Steps:
-1. UPDATE `view_stage_states` SET `status='done', completed_at=now` WHERE `(delivery_round_id, project_view_id IN viewIds, stage)`
-2. Insert `stage_finished` events
-3. Revalidate `/app/widget`, `/admin/projects/[id]`
-
-**No auto-advance of project status.** Project status must be changed manually by admin.
-
-#### `blockStage(projectId, roundId, viewIds[], stage, reason)`
-**Auth**: Any authenticated user.
-
-UPDATE `view_stage_states` SET `status='blocked', block_reason=reason`. Insert `stage_blocked` events. Revalidate `/app/widget`, `/admin/projects/[id]`.
-
-#### `unblockStage(projectId, roundId, viewId, stage)`
-**Auth**: Admin only.
-
-UPDATE `view_stage_states` SET `status='not_started', block_reason=null`. Insert `stage_unblocked` event. Revalidate `/admin/projects/[id]`, `/admin/today`.
-
-Note: `unblockStage` takes a single `viewId` (not an array), unlike `blockStage` which takes `viewIds[]`.
-
-#### `reopenStage(projectId, roundId, viewId, stage)`
-**Auth**: Admin only.
-
-UPDATE `view_stage_states` SET `status='reopened', completed_at=null`. Insert `stage_reopened` event. Revalidate `/admin/projects/[id]`.
-
----
-
-### `lib/actions/delivery.ts`
-
-#### `markDeliverySent(projectId, roundId)`
-**Auth**: Admin only.
-
-Steps:
-1. UPDATE `delivery_rounds` SET `status='delivered', delivered_at=now` WHERE `id=roundId`
-2. Fetch project's current `delivery_count`
-3. UPDATE `projects` SET `delivery_count += 1, status='waiting_for_feedback'`
-4. Log `delivery_marked_sent` event
-5. Revalidate `/admin/projects/[id]`, `/admin/projects`, `/admin/today`
-
-**Note**: Does NOT increment `current_round_number`. The round number only advances when a revision round is created.
-
-#### `createRevisionRound(projectId)`
-**Auth**: Admin only.
-
-Steps:
-1. Fetch project's `current_round_number` and `view_count`
-2. `newRoundNumber = current_round_number + 1`
-3. INSERT new `delivery_rounds` row: `round_number=newRoundNumber, status='active'`
-4. Fetch active views
-5. INSERT `view_stage_states` for all `views × STAGE_ORDER`, `status: 'not_started'`
-6. UPDATE `projects` SET `current_round_number=newRoundNumber, status='revision'`
-7. Log `revision_round_created` event
-8. Revalidate `/admin/projects/[id]`, `/admin/today`
-
----
+### `lib/actions/projects.ts`
+- `createProject(input)` — admin. Insert project (`status: 'active'`) → insert views → insert one round-0 `project_view_rounds` row per view → insert all `views × stages` states → log `project_created`. (Multi-query direct writes; project creation is low-contention.)
+- `updateProjectDates(projectId, { deliveryDate, deliveryTimeWindow })` — admin; logs `delivery_date_changed`.
+- `archiveProject(projectId)` — admin; sets `archived`, logs `project_archived`.
+- `deleteProjectPermanently(projectId, confirmation)` — admin; requires the literal string `"DELETE PROJECT"`. Deletes children explicitly (stage_events → project_events → view_stage_states → project_view_rounds → project_views → projects), stopping on first error.
+- `updateProjectStatus(projectId, status)` — admin; free-form status set, logs `project_status_changed`.
+- `updateProjectViewCount(projectId, n)` — admin; 1–99. Growing: reactivates/creates views, ensures each has a round + stage states. Shrinking: deactivates views with `number > n` (data preserved). Logs `view_count_changed`.
 
 ### `lib/actions/clients.ts`
+- `createClient` / `updateClient` — admin; fallback retry without `phone/website/notes` if those columns are missing.
+- `archiveClient` — admin; sets `status='archived'`.
 
-#### `createClient(input: ClientInput)`
-**Auth**: Admin only (via shared `requireAdmin()` helper).
-
-INSERT into `clients`. Has fallback: if the insert fails with "Could not find the column" (meaning `phone`/`website`/`notes` columns don't exist yet), retries with only `name`, `contact_name`, `contact_email`. Revalidates `/admin/clients`, `/admin/projects/new`.
-
-#### `updateClient(id, input: ClientInput)`
-**Auth**: Admin only. Same fallback as `createClient`.
-
-#### `archiveClient(id)`
-**Auth**: Admin only. Sets `status='archived'`.
+All workflow actions revalidate via `revalidateProjectScreens(projectId)` (widget + admin project screens).
 
 ---
 
-## 8. Widget Flow (Team Member)
+## 9. Widget Flow (Team Member)
 
-**Page**: `app/app/widget/page.tsx` (server component)
+**Page**: `app/app/widget/page.tsx` (RSC). Fetches in parallel: projects `.in('status', ['active', 'revision'])` with client name, current user, team members. `waiting_for_feedback`, `delivered`, `archived` are excluded — no team work needed. (Legacy statuses were backfilled by 009/010, so they're not in the filter.)
+
 **Client component**: `components/widget/WidgetClient.tsx`
 
-### Server component data fetch
-Queries `projects` with `.in('status', ['active', 'revision', 'waiting_for_info', 'ready_to_start', 'in_production', 'ready_to_deliver', 'not_started', 'in_progress'])`.
+### State model
+- Selection: `projectId`, `stage`, `selectedViewIds`, `etaDate`, `etaWindow`, `viewFilter`
+- Data: `views`, `viewRounds` (active per-view rounds), `states`, `roundLoading`, `workflowError`
+- Transient: `feedback` (auto-clears after 8 s), `conflictViewIds`, `panel: 'none' | 'block' | 'reset'` (block picker and reset confirm are mutually exclusive), `blockReason`, `undoState`
+- In-flight: `pendingAction`, `pendingViewIds`
 
-This intentionally **excludes** `waiting_for_feedback`, `delivered`, and `archived` — those projects don't need team work.
-
-Also fetches current user's name and role to show in the header.
-
-### Client component state
-
-```
-projectId        — selected project UUID
-stage            — selected StageType | ''
-selectedViewIds  — string[] of selected view UUIDs
-etaDate          — string (YYYY-MM-DD) | ''
-etaWindow        — TimeWindow | ''
-views            — View[] loaded async
-round            — Round | null loaded async
-roundLoading     — boolean (true while ensureProjectWorkflow is in flight)
-states           — ViewState[] for the active round
-conflictViewIds  — string[] set after a conflict error
-feedback         — { ok: boolean, msg: string } | null
-showBlockPanel   — boolean
-blockReason      — string
-```
+**Initial stage is whole-project, but per-view-aware:** `effectiveSelectedViewIds` is *derived* — when `stage === 'initial'` it is every view that has an Initial state in an **active** round (delivered/locked views are skipped). Because views can sit on different rounds with mixed statuses (view-count expansion, per-view delivery), each action further narrows to its actionable subset: Start targets views whose Initial is `not_started`/`reopened` (`startTargetViewIds`), Finish/Block target views `in_progress` and assigned to the caller (`finishTargetViewIds`), Reset targets non-`not_started` views owned by the caller or any if admin (`resetTargetViewIds`). A button is enabled when its subset is non-empty. Non-initial stages keep strict all-selected-must-match semantics over the user's explicit selection.
 
 ### Loading lifecycle
-
-When project changes (onChange of project selector):
-1. Synchronously reset: `projectId=next, selectedViewIds=[], conflictViewIds=[], showBlockPanel=false, blockReason='', stage='', etaDate='', etaWindow='', feedback=null, round=null, states=[], views=[], roundLoading=!!next`
-
-Then a `useEffect` (deps: `[projectId, supabase]`) fires:
-1. Parallel: fetch `project_views` from Supabase client + call `ensureProjectWorkflow(projectId)` (server action)
-2. Set `views` from Supabase result
-3. Set `roundLoading=false`
-4. If workflow error: set `feedback({ ok: false, msg: error })`
-5. If workflow success: set `round` and `states`
-
-**Why the state resets are in onChange not in useEffect:** The `react-hooks/set-state-in-effect` lint rule disallows synchronous `setState` calls in the effect body (causes cascading render loops). Resets go in the event handler instead.
-
-### `disabledReason` logic
-
-Controls whether Start Stage / Mark Done buttons are disabled:
-```
-isPending          → 'action running'
-!projectId         → 'no project selected'
-roundLoading       → 'loading workflow…'
-!round             → 'no active delivery round'
-!stage             → 'no stage selected'
-selectedViewIds.length === 0 → 'no views selected'
-null               → button is enabled
-```
-
-ETA is always optional — never gates the Start button.
-
-### View button states
-
-For each view button in the grid, the style reflects the `view_stage_states` status for that `(view, stage)` combination:
-
-| Condition | Style |
-|-----------|-------|
-| selected | accent background |
-| conflict (returned from startStage) | blocked style |
-| status = done | done-bg with checkmark |
-| status = in_progress, assigned = current user | accent border |
-| status = in_progress, assigned = other user | warn border |
-| status = blocked | blocked-bg with `!` |
-| otherwise | default |
-
-### Stage warning
-
-If the selected stage is `advanced` or `post_production`, the widget shows a warning if the previous stage is not `done` for any of the selected views. This is informational only — it does not disable the button.
+On project change: synchronous reset in the `onChange` handler (lint rule `react-hooks/set-state-in-effect` forbids sync setState in effects), then a `useEffect` fetches `project_views` (client-side Supabase) and `ensureProjectWorkflow` (server action) in parallel.
 
 ### Actions
+All four mutations (start / finish / reset / block) follow the same shape: snapshot affected states → optimistic `setStates` → server action → on error `rollback(snapshot)` + feedback → on success `mergeStates(updatedStates)` from the RPC response. Start and finish arm a 12-second **undo toast**; undo restores the snapshot via `undoStageAction` (direct writes).
 
-**Start Stage** (`handleStart`):
-- Calls `startStage({ projectId, roundId: round.id, viewIds, stage, etaDate|null, etaTimeWindow|null })`
-- On `error === 'conflict'`: show conflict feedback, highlight conflicting views
-- On other error: show error feedback
-- On success: clear selection, reload states from DB
+- Conflict on start: RPC returns `conflictingViewIds`; those cells get the conflict style and a feedback message is shown.
+- Eligibility: `canStart` (all selected `not_started`/`reopened`, previous stage done unless admin), `canFinish`/`canBlock` (all selected `in_progress` and mine), `canReset` (anything non-`not_started`, mine unless admin; warns about cascade to later stages).
+- `startDisabledReason` / `finishDisabledReason` strings surface why a button is disabled.
 
-**Mark Done** (`handleFinish`):
-- Calls `finishStage({ projectId, roundId: round.id, viewIds, stage })`
-- On error: show feedback; on success: clear selection, reload states
-
-**Block** (shown only when `anyInProgress && selectedViewIds.length > 0 && !!stage`):
-- Shows block panel with reason selector
-- Calls `blockStage(projectId, round.id, viewIds, stage, blockReason)`
-- Requires reason to be selected (button disabled if empty)
-
-**reloadStates()**: Fetches `view_stage_states` for the current `round.id` from Supabase client directly (not via server action).
-
-### Dev debug panel
-
-Rendered only in `NODE_ENV === 'development'`. Shows: project id, round id (or 'loading…'), stage, selected view labels, `disabledReason` (or 'none — button should be active').
+### Quick filters
+Chips: All / Mine / Available / Blocked / Done with counts; changing a filter prunes the selection to views still visible.
 
 ---
 
-## 9. Admin Flow
+## 10. Admin Flow
 
-### `/admin/projects` — Project list
+### `/admin/projects`
+RSC list of non-archived projects with progress derived from active rounds' states.
 
-Server component. Queries all non-archived projects with their `delivery_rounds.view_stage_states` for progress calculation. Progress is based on the active round's states.
+### `/admin/projects/[id]`
+RSC fetches project + client, all `project_view_rounds`, active views, and stage states for active rounds (joined with `users.name`). `ProjectDetailClient` handles:
 
-Each row has:
-- Link to `/admin/projects/[id]`
-- Progress bar (active round states)
-- Status badge
-- `ProjectCleanupActions` (compact mode) — Archive and Delete buttons
+| Section | Behavior |
+|---------|----------|
+| Info bar | Delivery date, progress, status, view count — each opens an inline editor |
+| Blocked stages | List with per-stage Unblock buttons |
+| Send delivery | Per-view checkboxes with readiness ("Ready" / "N incomplete"); select-all-ready; confirm → `markDeliverySent(projectId, viewIds)` |
+| Revision | Shown when status is `waiting_for_feedback`/`delivered` and delivered views exist; per-view checkboxes → `createRevisionRound(projectId, viewIds)` |
+| View count | +/− stepper → `updateProjectViewCount` |
 
-### `/admin/projects/[id]` — Project detail
+### `/admin/deliveries`
+Delivery history grouped by `(project, delivered_at)` with **Undo** buttons → `undoDeliverySent(projectId, deliveredAt)`.
 
-Server component fetching:
-- Full project row + client
-- All `delivery_rounds` ordered by round_number
-- Active views
-- `view_stage_states` for the active round (joined with `users.name`)
-
-**Active round**: finds the first round where `status = 'active' OR 'ready_for_admin_review'`.
-
-**Stage grid**: Renders a table of `views × stages` with `StageBadge` for each cell. Shows `block_reason` and ETA inline per cell.
-
-**`ProjectDetailClient`** (client component) handles:
-
-| Section | Fields / Actions |
-|---------|-----------------|
-| Blocked stages panel | Lists all states where `status='blocked'`. Each has an Unblock button → calls `unblockStage` |
-| Status | Current status display. "Change" → grid of `ACTIVE_PROJECT_STATUSES` buttons → calls `updateProjectStatus` |
-| Delivery date | Current date display. "Edit" → date input + time_window select + Save → calls `updateProjectDates` |
-| Delivery actions | "Mark delivery sent" → confirm → `markDeliverySent`; "Create revision round" → `createRevisionRound` |
-| Rounds list | Shows all rounds with status badges |
-
-**`ProjectCleanupActions`** (inline modal):
-- "Archive" button → modal shows project name + "Hides from the widget. Data and history are kept." → Archive/Cancel → `archiveProject` → `router.refresh()`
-- "Delete" button → modal shows project name + "Removes all views, rounds, stage states, and history. Cannot be undone." → Delete/Cancel → `deleteProjectPermanently` → `router.push(afterDeleteHref)` or `router.refresh()`
-- `afterDeleteHref="/admin/projects"` on detail page; not set on list page
-- Errors from server actions are shown inside the modal
-
-### `/admin/today` — Dashboard
-
-Server component. 5 parallel queries:
-
-1. **Due this week**: projects with `delivery_date` between today and +7 days, `status NOT IN ('delivered','archived')`
-2. **Stages due today**: `view_stage_states` where `latest_eta_date = today AND status = 'in_progress'` (joined with project, view, user)
-3. **Blocked**: `view_stage_states` where `status = 'blocked'` (joined with project, view, user)
-4. **Waiting for feedback**: projects where `status = 'waiting_for_feedback'`
-5. **Active revisions**: projects where `status = 'revision'`
-
-Each section shows a count. Empty sections are hidden. If all empty: "All clear."
+### `/admin/today`
+Parallel queries: due this week, ETAs due today (`latest_eta_date = today AND status = 'in_progress'`), blocked stages, waiting-for-feedback projects, active revisions.
 
 ---
 
-## 10. Known Invariants & Edge Cases
+## 11. Known Invariants & Edge Cases
 
-### Project lifecycle state machine
-There is no enforced state machine. Status is set freely by admin via `updateProjectStatus` or implicitly by:
-- `createProject` → `active`
-- `markDeliverySent` → `waiting_for_feedback`
-- `createRevisionRound` → `revision`
-- `archiveProject` → `archived`
+### Delivered rounds are locked
+After `mark_delivery_sent_v2_rpc`, a view has no active round. Since migration 024, `ensure_workflow_v2_rpc` will **not** reactivate a `delivered` round — merely opening the widget cannot reopen delivered work. The only exits from `delivered` are `create_revision_round_v2_rpc` (new round) or `undo_delivery_sent_v2_rpc` (revert). Views with no active round simply don't participate in the widget workflow.
 
-### Round number vs delivery count
-- `current_round_number` advances only on `createRevisionRound` (incremented by 1)
-- `delivery_count` advances on every `markDeliverySent` (including the initial delivery)
-- Round 00 is the initial delivery; Round 01 is the first revision
+### Delivery batching by timestamp
+`mark_delivery_sent_v2_rpc` stamps all rounds in one call with a single `delivered_at` value; the deliveries history and undo identify a batch by exact `(project_id, delivered_at)` match. Don't update `delivered_at` out-of-band.
 
-### `ensureProjectWorkflow` idempotency
-Safe to call multiple times. Uses UNIQUE constraint on `(delivery_round_id, project_view_id, stage)` to avoid duplicate inserts — BUT the current implementation checks for missing keys and only inserts missing ones, so it won't hit a constraint violation. If two concurrent calls race, the second will either find the rows already there or hit the unique constraint (which would surface as an error).
+### Undo safety
+`undo_delivery_sent_v2_rpc` refuses if any later round of the affected views has a stage that isn't `not_started`. Clean later rounds are cascade-deleted (their stage states go via FK cascade). The whole operation is one transaction; it cannot race `create_revision_round_v2_rpc` because both lock the relevant rounds / project row.
+
+### Round counters
+- `project_views.current_round_number` — authoritative per-view counter, maintained by the revision/undo RPCs.
+- `projects.current_round_number` — **dead** (pre-018 relic). Do not read it.
+- `projects.delivery_count` — advisory; UI derives delivery history from `delivered_at` timestamps.
+
+### No enforced project status machine
+Admin can set any canonical status via `updateProjectStatus`. Implicit transitions: create → `active`; delivery → `waiting_for_feedback`; revision → `revision`; undo delivery → `active`; archive → `archived`.
+
+### Stage order enforcement is server-side for team only
+`start_stage_v2_rpc` requires the previous stage `done` for team members; admins bypass. The widget mirrors this client-side (`stageOrderBlock`) for UX, but the RPC is the authority.
+
+### Optimistic-update rollback caveat
+The widget snapshots only the fields it mutates. If a concurrent server change lands between snapshot and rollback, the rollback can overwrite it until the next `ensureProjectWorkflow` reload. Acceptable for a small team; a full reload on error is the mitigation (`reloadStates()` is called after failed undos).
+
+### `view_stage_states` team UPDATE policy is still open
+Required by `undoStageAction` (widget undo). All other state mutations go through RPCs that enforce ownership. Tightening this policy (e.g. `assigned_user_id = auth.uid()` WITH CHECK) would break undo of finish (which clears the assignee) — revisit if undo ever moves into an RPC.
 
 ### `deleteProjectPermanently` event log race
-The action logs a `project_archived` event first, then deletes all `project_events`. The pre-log is therefore always deleted. This is intentional (last-breath audit trail that is immediately cleaned up — of questionable value).
+The action logs a `project_archived` event first, then deletes all `project_events` — the pre-log is always deleted. Intentional but of questionable value.
 
-### `public_eta_date` column
-The column still exists in the database (created in 001, supposed to be dropped in 010). The `/admin/projects/[id]` page server component still references `project.public_eta_date` in the 3-column info grid ("Public ETA" card). The TS type does not include this field (removed from Row). This will produce a TypeScript error (accessing property not in type) or a runtime `undefined`. **This is a bug in the detail page**.
-
-### Widget project filter vs status
-The widget server component uses an explicit `IN` list of allowed statuses rather than `.not('status', 'eq', 'archived')`. This means:
-- `waiting_for_feedback` and `delivered` are intentionally excluded (no team work needed)
-- Legacy status values (`waiting_for_info`, `ready_to_start`, `in_production`, `ready_to_deliver`, `not_started`, `in_progress`) are included — so old rows not yet migrated will still appear in the widget
-- `revision` and `active` are the primary expected active states
-
-### `blockStage` vs `unblockStage` signature difference
-- `blockStage(projectId, roundId, viewIds: string[], stage, reason)` — takes an array of viewIds
-- `unblockStage(projectId, roundId, viewId: string, stage)` — takes a single viewId
-
-The admin unblock UI in `ProjectDetailClient` calls it per-state (one at a time), so this is consistent with use.
-
-### `createRevisionRound` does not archive the old round
-The previously active round stays with `status='active'`. After `createRevisionRound`, there are two rounds where `status='active'`. `ensureProjectWorkflow` uses `ORDER BY round_number DESC LIMIT 1` to pick the latest one, which will be the new revision round. This is correct in practice but means the old round is not formally closed.
-
-### No client-side auth enforcement
-Client components (`WidgetClient`, `ProjectDetailClient`) call server actions directly. The server actions always re-check auth + role. There is no client-side role guard beyond what the server page component renders.
-
-### `block_reason` column
-Added after migration 001 (not present in the initial schema). The TypeScript type includes it. Migration that added it is not listed here (likely 006 or 008).
+### Enum parse-time validation
+See the gotcha in §6 — always cast `status::text` when filtering on possibly-absent enum literals.

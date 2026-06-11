@@ -96,8 +96,9 @@ export function NewProjectForm({ clients: initialClients }: { clients: Client[] 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
-        <label className={labelClass}>Project name</label>
+        <label className={labelClass} htmlFor="np-name">Project name</label>
         <Input
+          id="np-name"
           type="text"
           value={name}
           onChange={e => setName(e.target.value)}
@@ -108,8 +109,9 @@ export function NewProjectForm({ clients: initialClients }: { clients: Client[] 
 
       {/* Client selector */}
       <div>
-        <label className={labelClass}>Client <span className="text-blocked-text">*</span></label>
+        <label className={labelClass} htmlFor="np-client">Client <span className="text-blocked-text">*</span></label>
         <Select
+          id="np-client"
           value={showNewClient ? NEW_CLIENT_SENTINEL : clientId}
           onChange={e => handleClientChange(e.target.value)}
           required={!showNewClient}
@@ -128,8 +130,9 @@ export function NewProjectForm({ clients: initialClients }: { clients: Client[] 
           <p className="text-label font-semibold uppercase text-accent">New client</p>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className={labelClass}>Company name *</label>
+              <label className={labelClass} htmlFor="np-client-name">Company name *</label>
               <Input
+                id="np-client-name"
                 value={newClientName}
                 onChange={e => setNewClientName(e.target.value)}
                 required
@@ -137,8 +140,9 @@ export function NewProjectForm({ clients: initialClients }: { clients: Client[] 
               />
             </div>
             <div>
-              <label className={labelClass}>Contact name</label>
+              <label className={labelClass} htmlFor="np-client-contact">Contact name</label>
               <Input
+                id="np-client-contact"
                 value={newClientContact}
                 onChange={e => setNewClientContact(e.target.value)}
                 placeholder="Jane Smith"
@@ -146,8 +150,9 @@ export function NewProjectForm({ clients: initialClients }: { clients: Client[] 
             </div>
           </div>
           <div>
-            <label className={labelClass}>Contact email</label>
+            <label className={labelClass} htmlFor="np-client-email">Contact email</label>
             <Input
+              id="np-client-email"
               type="email"
               value={newClientEmail}
               onChange={e => setNewClientEmail(e.target.value)}
@@ -180,16 +185,18 @@ export function NewProjectForm({ clients: initialClients }: { clients: Client[] 
 
       <div className="flex gap-3">
         <div className="flex-1">
-          <label className={labelClass}>Delivery date</label>
+          <label className={labelClass} htmlFor="np-delivery-date">Delivery date</label>
           <Input
+            id="np-delivery-date"
             type="date"
             value={deliveryDate}
             onChange={e => setDeliveryDate(e.target.value)}
           />
         </div>
         <div className="w-36">
-          <label className={labelClass}>Time window</label>
+          <label className={labelClass} htmlFor="np-delivery-window">Time window</label>
           <Select
+            id="np-delivery-window"
             value={deliveryWindow}
             onChange={e => setDeliveryWindow(e.target.value as TimeWindow)}
           >
@@ -202,9 +209,10 @@ export function NewProjectForm({ clients: initialClients }: { clients: Client[] 
       </div>
 
       <div>
-        <label className={labelClass}>Number of views</label>
+        <label className={labelClass} htmlFor="np-view-count">Number of views</label>
         <div className="w-28">
           <Input
+            id="np-view-count"
             type="number"
             min={1}
             max={30}

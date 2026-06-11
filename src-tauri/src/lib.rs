@@ -15,6 +15,16 @@ pub fn run() {
                 .parse()
                 .expect("OAKI_WIDGET_URL is not a valid URL");
 
+            // Release builds must point at HTTPS — a plain-http widget URL in a
+            // shipped installer would let a network attacker inject code into
+            // the desktop webview.
+            #[cfg(not(debug_assertions))]
+            assert_eq!(
+                url.scheme(),
+                "https",
+                "OAKI_WIDGET_URL must be an https:// URL for release builds"
+            );
+
             WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
                 .title("OAKI Tracker")
                 .inner_size(560.0, 720.0)

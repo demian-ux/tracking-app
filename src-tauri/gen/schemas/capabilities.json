@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default capabilities for Oaki Studio Widget","local":true,"windows":["main"],"permissions":["core:default"]}}
+{"default":{"identifier":"default","description":"Default capabilities for OAKI Tracker","local":true,"windows":["main"],"permissions":["core:default"]}}

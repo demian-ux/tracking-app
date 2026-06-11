@@ -2,7 +2,7 @@
 
 import { revalidateProjectScreens } from '@/lib/utils/revalidate'
 import { requireAdmin } from '@/lib/actions/auth'
-import { STAGE_ORDER, STAGE_LABELS } from '@/lib/types/app'
+import { STAGE_LABELS } from '@/lib/types/app'
 import type { StageType } from '@/lib/types/database'
 
 export interface IncompleteItem {
@@ -11,81 +11,46 @@ export interface IncompleteItem {
   status: string
 }
 
+type RpcResult<T = unknown> =
+  | ({ ok: true } & T)
+  | { ok: false; error: string; [key: string]: unknown }
+
+function rpcErrorToString(error: unknown): string {
+  if (!error) return 'Unexpected error.'
+  if (typeof error === 'string') return error
+  if (typeof error === 'object' && 'message' in error && typeof (error as { message: unknown }).message === 'string') {
+    return (error as { message: string }).message
+  }
+  return 'Unexpected error.'
+}
+
 export async function markDeliverySent(projectId: string, viewIds: string[]) {
   const auth = await requireAdmin()
   if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
-  const { user, supabase } = auth.data
+  const { supabase } = auth.data
 
   if (!viewIds || viewIds.length === 0) return { error: 'No views selected' }
 
-  // Find active rounds for selected views
-  const { data: activeRounds } = await supabase
-    .from('project_view_rounds')
-    .select('id, project_view_id')
-    .eq('project_id', projectId)
-    .eq('status', 'active')
-    .in('project_view_id', viewIds)
-
-  if (!activeRounds || activeRounds.length === 0) {
-    return { error: 'No active rounds found for selected views' }
-  }
-
-  const roundIds = activeRounds.map(r => r.id)
-
-  // Check all stages are done
-  const { data: states } = await supabase
-    .from('view_stage_states')
-    .select('id, status, stage, project_view_id, project_views ( label )')
-    .in('project_view_round_id', roundIds)
-
-  if (!states) return { error: 'Could not fetch stage states' }
-
-  const incomplete: IncompleteItem[] = states
-    .filter(s => s.status !== 'done')
-    .map(s => ({
-      viewLabel: (s.project_views as unknown as { label: string } | null)?.label ?? '?',
-      stageLabel: STAGE_LABELS[s.stage as StageType],
-      status: s.status,
-    }))
-
-  if (incomplete.length > 0) {
-    return {
-      error: `${incomplete.length} stage(s) not done`,
-      incomplete,
-    }
-  }
-
-  // Mark selected rounds as delivered
-  const { error: roundErr } = await supabase
-    .from('project_view_rounds')
-    .update({ status: 'delivered', delivered_at: new Date().toISOString() })
-    .in('id', roundIds)
-
-  if (roundErr) return { error: roundErr.message }
-
-  // Increment delivery_count and set project status
-  const { data: project } = await supabase
-    .from('projects')
-    .select('delivery_count')
-    .eq('id', projectId)
-    .single()
-
-  const { error: projectErr } = await supabase
-    .from('projects')
-    .update({
-      status: 'waiting_for_feedback',
-      delivery_count: (project?.delivery_count ?? 0) + 1,
-    })
-    .eq('id', projectId)
-
-  if (projectErr) return { error: projectErr.message }
-
-  await supabase.from('project_events').insert({
-    project_id: projectId,
-    actor_id: user.id,
-    event_type: 'delivery_marked_sent',
-    payload: { view_ids: viewIds },
+  const { data, error } = await supabase.rpc('mark_delivery_sent_v2_rpc', {
+    p_project_id: projectId,
+    p_view_ids: viewIds,
   })
+
+  if (error) return { error: rpcErrorToString(error) }
+  const result = data as RpcResult<{ deliveredAt: string; roundCount: number }> & {
+    incomplete?: { viewLabel: string; stage: StageType; status: string }[]
+  }
+  if (!result?.ok) {
+    if (result?.error === 'incomplete') {
+      const incomplete: IncompleteItem[] = (result.incomplete ?? []).map(item => ({
+        viewLabel: item.viewLabel,
+        stageLabel: STAGE_LABELS[item.stage],
+        status: item.status,
+      }))
+      return { error: `${incomplete.length} stage(s) not done`, incomplete }
+    }
+    return { error: result?.error ?? 'Delivery failed' }
+  }
 
   revalidateProjectScreens(projectId)
   return { data: true }
@@ -94,96 +59,22 @@ export async function markDeliverySent(projectId: string, viewIds: string[]) {
 export async function undoDeliverySent(projectId: string, deliveredAt: string) {
   const auth = await requireAdmin()
   if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
-  const { user, supabase } = auth.data
+  const { supabase } = auth.data
 
-  const { data: rounds } = await supabase
-    .from('project_view_rounds')
-    .select('id, project_view_id, round_number')
-    .eq('project_id', projectId)
-    .eq('status', 'delivered')
-    .eq('delivered_at', deliveredAt)
-
-  if (!rounds || rounds.length === 0) {
-    return { error: 'No delivery found at that timestamp.' }
-  }
-
-  // Find subsequent rounds (revision rounds created after this delivery) and
-  // check whether any of them have started work. If they have, refuse — the
-  // user must reset those stages first. If they're all clean, cascade-delete
-  // them so the undo can proceed.
-  const viewIds = rounds.map(r => r.project_view_id)
-  const maxRoundByView = new Map<string, number>()
-  for (const r of rounds) maxRoundByView.set(r.project_view_id, r.round_number)
-
-  const { data: laterRounds, error: laterErr } = await supabase
-    .from('project_view_rounds')
-    .select(`
-      id, project_view_id, round_number,
-      view_stage_states ( status )
-    `)
-    .eq('project_id', projectId)
-    .in('project_view_id', viewIds)
-
-  if (laterErr) return { error: laterErr.message }
-
-  const laterToDelete: string[] = []
-  for (const lr of laterRounds ?? []) {
-    const threshold = maxRoundByView.get(lr.project_view_id)
-    if (threshold === undefined || lr.round_number <= threshold) continue
-    const states = (lr as unknown as { view_stage_states: { status: string }[] }).view_stage_states ?? []
-    const hasWork = states.some(s => s.status !== 'not_started')
-    if (hasWork) {
-      return {
-        error: 'Cannot undo: a revision round after this delivery has started work. Reset those stages back to "not started" first, then try again.',
-      }
-    }
-    laterToDelete.push(lr.id)
-  }
-
-  if (laterToDelete.length > 0) {
-    const { error: deleteErr } = await supabase
-      .from('project_view_rounds')
-      .delete()
-      .in('id', laterToDelete)
-    if (deleteErr) return { error: `Could not remove revision rounds: ${deleteErr.message}` }
-  }
-
-  const { error: revertErr } = await supabase
-    .from('project_view_rounds')
-    .update({ status: 'active', delivered_at: null })
-    .in('id', rounds.map(r => r.id))
-  if (revertErr) return { error: revertErr.message }
-
-  const { data: project } = await supabase
-    .from('projects')
-    .select('delivery_count')
-    .eq('id', projectId)
-    .single()
-
-  const newCount = Math.max(0, (project?.delivery_count ?? 0) - 1)
-
-  const { error: projectErr } = await supabase
-    .from('projects')
-    .update({ delivery_count: newCount, status: 'active' })
-    .eq('id', projectId)
-  if (projectErr) return { error: projectErr.message }
-
-  await supabase.from('project_events').insert({
-    project_id: projectId,
-    actor_id: user.id,
-    event_type: 'delivery_undone',
-    payload: {
-      delivered_at: deliveredAt,
-      view_ids: rounds.map(r => r.project_view_id),
-      revision_rounds_removed: laterToDelete.length,
-    },
+  const { data, error } = await supabase.rpc('undo_delivery_sent_v2_rpc', {
+    p_project_id: projectId,
+    p_delivered_at: deliveredAt,
   })
+
+  if (error) return { error: rpcErrorToString(error) }
+  const result = data as RpcResult<{ revertedCount: number; revisionRoundsRemoved: number }>
+  if (!result?.ok) return { error: result?.error ?? 'Undo failed' }
 
   revalidateProjectScreens(projectId)
   return {
     data: {
-      revertedCount: rounds.length,
-      revisionRoundsRemoved: laterToDelete.length,
+      revertedCount: result.revertedCount,
+      revisionRoundsRemoved: result.revisionRoundsRemoved,
     },
   }
 }
@@ -191,99 +82,19 @@ export async function undoDeliverySent(projectId: string, deliveredAt: string) {
 export async function createRevisionRound(projectId: string, viewIds: string[]) {
   const auth = await requireAdmin()
   if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
-  const { user, supabase } = auth.data
+  const { supabase } = auth.data
 
   if (!viewIds || viewIds.length === 0) return { error: 'No views selected' }
 
-  const { data: project } = await supabase
-    .from('projects')
-    .select('id, status')
-    .eq('id', projectId)
-    .single()
-
-  if (!project) return { error: 'Project not found' }
-  if (project.status !== 'waiting_for_feedback' && project.status !== 'delivered') {
-    return { error: 'Project is not waiting for feedback or delivered' }
-  }
-
-  // For each selected view, find its latest round and create a new one
-  const { data: latestRounds } = await supabase
-    .from('project_view_rounds')
-    .select('*')
-    .eq('project_id', projectId)
-    .in('project_view_id', viewIds)
-    .order('round_number', { ascending: false })
-
-  const newRoundNumbers: Record<string, number> = {}
-  const viewsProcessed = new Set<string>()
-
-  for (const round of latestRounds ?? []) {
-    if (!viewsProcessed.has(round.project_view_id)) {
-      newRoundNumbers[round.project_view_id] = round.round_number + 1
-      viewsProcessed.add(round.project_view_id)
-    }
-  }
-
-  // Default to round 1 for views with no existing round
-  for (const viewId of viewIds) {
-    if (!newRoundNumbers[viewId]) {
-      newRoundNumbers[viewId] = 1
-    }
-  }
-
-  // Create new rounds for selected views
-  const roundInserts = viewIds.map(viewId => ({
-    project_id: projectId,
-    project_view_id: viewId,
-    round_number: newRoundNumbers[viewId],
-    status: 'active' as const,
-  }))
-
-  const { data: newRounds, error: roundErr } = await supabase
-    .from('project_view_rounds')
-    .insert(roundInserts)
-    .select()
-
-  if (roundErr || !newRounds) return { error: roundErr?.message ?? 'Failed to create revision rounds' }
-
-  // Create stage states for new rounds
-  const stateInserts = newRounds.flatMap(round =>
-    STAGE_ORDER.map(stage => ({
-      project_id: projectId,
-      project_view_round_id: round.id,
-      project_view_id: round.project_view_id,
-      stage: stage as StageType,
-      status: 'not_started' as const,
-    }))
-  )
-
-  if (stateInserts.length > 0) {
-    const { error: statesErr } = await supabase.from('view_stage_states').insert(stateInserts)
-    if (statesErr) return { error: statesErr.message }
-  }
-
-  // Update current_round_number on each affected view
-  for (const viewId of viewIds) {
-    await supabase
-      .from('project_views')
-      .update({ current_round_number: newRoundNumbers[viewId] })
-      .eq('id', viewId)
-  }
-
-  const { error: projectErr } = await supabase
-    .from('projects')
-    .update({ status: 'revision' })
-    .eq('id', projectId)
-
-  if (projectErr) return { error: projectErr.message }
-
-  await supabase.from('project_events').insert({
-    project_id: projectId,
-    actor_id: user.id,
-    event_type: 'revision_round_created',
-    payload: { view_ids: viewIds },
+  const { data, error } = await supabase.rpc('create_revision_round_v2_rpc', {
+    p_project_id: projectId,
+    p_view_ids: viewIds,
   })
 
+  if (error) return { error: rpcErrorToString(error) }
+  const result = data as RpcResult<{ viewIds: string[] }>
+  if (!result?.ok) return { error: result?.error ?? 'Could not create revision round' }
+
   revalidateProjectScreens(projectId)
-  return { data: { view_ids: viewIds } }
+  return { data: { view_ids: result.viewIds ?? viewIds } }
 }

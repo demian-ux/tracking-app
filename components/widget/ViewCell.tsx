@@ -87,11 +87,12 @@ export const ViewCell = memo(function ViewCell({
       onClick={() => !prereqBlocked && onToggle(view.id)}
       disabled={prereqBlocked}
       title={statusLine}
+      aria-label={`${view.label} — ${statusLine}`}
       className={[
         'relative h-11 flex items-center justify-center rounded-sm border',
         'text-sm font-semibold tabular-nums select-none',
         'transition-colors duration-100 ease-out',
-        'focus-visible:outline-none focus-visible:z-10',
+        'focus-visible:z-10',
         pending ? 'animate-pulse' : '',
         stateClass,
       ].filter(Boolean).join(' ')}

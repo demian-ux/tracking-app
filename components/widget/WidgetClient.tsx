@@ -63,6 +63,12 @@ const FILTER_LABELS: Record<ViewFilter, string> = {
   done: 'Done',
 }
 
+/** Local (not UTC) date as YYYY-MM-DD for the date input. */
+function todayISO(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 function CellLegend() {
   const items = [
     { key: 'not_started', label: 'Idle', cls: 'bg-surface border-line' },
@@ -93,7 +99,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
   const [projectId, setProjectId] = useState('')
   const [stage, setStage] = useState<StageType | ''>('')
   const [selectedViewIds, setSelectedViewIds] = useState<string[]>([])
-  const [etaDate, setEtaDate] = useState('')
+  const [etaDate, setEtaDate] = useState(todayISO)
   const [etaWindow, setEtaWindow] = useState<TimeWindow | ''>('')
   const [viewFilter, setViewFilter] = useState<ViewFilter>('all')
 
@@ -105,10 +111,17 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
   const [conflictViewIds, setConflictViewIds] = useState<string[]>([])
   const [feedback, setFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
 
-  const [showBlockPanel, setShowBlockPanel] = useState(false)
+  // The block picker and reset confirm are mutually exclusive — one state, not two booleans.
+  const [panel, setPanel] = useState<'none' | 'block' | 'reset'>('none')
   const [blockReason, setBlockReason] = useState('')
-  const [showResetConfirm, setShowResetConfirm] = useState(false)
   const [undoState, setUndoState] = useState<UndoState | null>(null)
+
+  // Auto-clear feedback so stale messages don't linger until the next action.
+  useEffect(() => {
+    if (!feedback) return
+    const timer = setTimeout(() => setFeedback(null), 8000)
+    return () => clearTimeout(timer)
+  }, [feedback])
 
   const project = projects.find(p => p.id === projectId) ?? null
   const usersById = useMemo(() => Object.fromEntries(users.map(u => [u.id, u])), [users])
@@ -166,15 +179,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
     return () => { cancelled = true }
   }, [projectId, supabase])
 
-  // ── Initial stage is whole-project: auto-select all views ───────────────────
-  useEffect(() => {
-    if (stage !== 'initial' || views.length === 0) return
-    setSelectedViewIds(prev => {
-      const allIds = views.map(v => v.id)
-      if (prev.length === allIds.length && prev.every((id, i) => id === allIds[i])) return prev
-      return allIds
-    })
-  }, [stage, views])
+  const stageIsInitial = stage === 'initial'
 
   async function reloadStates() {
     if (viewRounds.length === 0) return
@@ -193,6 +198,16 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
     return stateByViewStage.get(`${viewId}:${s}`)
   }
 
+  // ── Initial stage is whole-project: selection is derived ────────────────────
+  // Views can sit on different rounds (view-count expansion, per-view delivery),
+  // so "whole project" means every view that has an Initial state in an active
+  // round — delivered/locked views are skipped, and the action handlers further
+  // narrow to the subset that is actually actionable (see *TargetViewIds).
+  const effectiveSelectedViewIds = useMemo(() => {
+    if (!stageIsInitial) return selectedViewIds
+    return views.filter(v => stateByViewStage.has(`${v.id}:initial`)).map(v => v.id)
+  }, [stageIsInitial, views, selectedViewIds, stateByViewStage])
+
   function mergeStates(updated: Partial<ViewState>[]) {
     const byId = new Map(updated.map(s => [s.id!, s]))
     setStates(prev => prev.map(s => {
@@ -201,49 +216,42 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
     }))
   }
 
+  const clearTransient = useCallback(() => {
+    setConflictViewIds([])
+    setFeedback(null)
+    setPanel('none')
+    setBlockReason('')
+  }, [])
+
   const toggleView = useCallback((viewId: string) => {
     setSelectedViewIds(prev =>
       prev.includes(viewId) ? prev.filter(id => id !== viewId) : [...prev, viewId]
     )
-    setConflictViewIds([])
-    setFeedback(null)
-    setShowBlockPanel(false)
-    setBlockReason('')
-  }, [])
+    clearTransient()
+  }, [clearTransient])
 
+  // Note: deliberately does NOT reset the ETA fields — a date chosen for one
+  // stage stays as the default for the following stages. The ETA resets to
+  // today only when switching projects.
   function clearSelection() {
     setSelectedViewIds([])
-    setConflictViewIds([])
-    setFeedback(null)
-    setShowBlockPanel(false)
-    setBlockReason('')
-    setShowResetConfirm(false)
-    setEtaDate('')
-    setEtaWindow('')
+    clearTransient()
   }
 
   function handleStageChange(newStage: StageType) {
     setStage(newStage)
-    setConflictViewIds([])
-    setFeedback(null)
-    setShowBlockPanel(false)
-    setBlockReason('')
-    setShowResetConfirm(false)
+    clearTransient()
     setViewFilter('all')
-    if (newStage === 'initial') {
-      setSelectedViewIds(views.map(v => v.id))
-    } else {
-      setSelectedViewIds([])
-    }
+    setSelectedViewIds([])
   }
 
   // ── Stage order enforcement ─────────────────────────────────────────────────
   const stageOrderBlock = (() => {
-    if (!stage || selectedViewIds.length === 0 || isAdmin) return null
+    if (!stage || effectiveSelectedViewIds.length === 0 || isAdmin) return null
     const idx = STAGE_ORDER.indexOf(stage as StageType)
     if (idx === 0) return null
     const prev = STAGE_ORDER[idx - 1]
-    const blocked = selectedViewIds.filter(vid => {
+    const blocked = effectiveSelectedViewIds.filter(vid => {
       const s = getState(vid, prev)
       return !s || s.status !== 'done'
     })
@@ -280,29 +288,50 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
   }, [views, stage, stateByViewStage, userId])
 
   // ── Action eligibility ──────────────────────────────────────────────────────
-  const selectedStates = selectedViewIds
+  const selectedStates = effectiveSelectedViewIds
     .map(id => (stage ? getState(id, stage as StageType) : undefined))
     .filter((s): s is ViewState => s !== undefined)
 
   const allSelectedHaveState =
     stage !== '' &&
-    selectedStates.length === selectedViewIds.length &&
-    selectedViewIds.length > 0
+    selectedStates.length === effectiveSelectedViewIds.length &&
+    effectiveSelectedViewIds.length > 0
 
-  const canStart =
-    !isPending && !pendingAction && viewRounds.length > 0 && !roundLoading && !!stage &&
-    allSelectedHaveState && !stageOrderBlock &&
-    selectedStates.every(s => s.status === 'not_started' || s.status === 'reopened')
+  // For Initial, each action targets the subset of views it can actually apply
+  // to (views may be on different rounds with mixed statuses). For the other
+  // stages the user's explicit selection must be uniformly actionable.
+  const startTargetViewIds = stageIsInitial
+    ? effectiveSelectedViewIds.filter(id => {
+        const s = getState(id, 'initial')
+        return s && (s.status === 'not_started' || s.status === 'reopened')
+      })
+    : effectiveSelectedViewIds
 
-  const canFinish =
-    !isPending && !pendingAction && viewRounds.length > 0 && !roundLoading && !!stage &&
-    allSelectedHaveState &&
-    selectedStates.every(s => s.status === 'in_progress' && s.assigned_user_id === userId)
+  const finishTargetViewIds = stageIsInitial
+    ? effectiveSelectedViewIds.filter(id => {
+        const s = getState(id, 'initial')
+        return s?.status === 'in_progress' && (isAdmin || s.assigned_user_id === userId)
+      })
+    : effectiveSelectedViewIds
 
-  const canBlock =
-    !isPending && !pendingAction && viewRounds.length > 0 && !roundLoading && !!stage &&
-    allSelectedHaveState &&
-    selectedStates.every(s => s.status === 'in_progress' && s.assigned_user_id === userId)
+  const actionable =
+    !isPending && !pendingAction && viewRounds.length > 0 && !roundLoading && !!stage
+
+  const canStart = actionable && !stageOrderBlock && (
+    stageIsInitial
+      ? startTargetViewIds.length > 0
+      : allSelectedHaveState &&
+        selectedStates.every(s => s.status === 'not_started' || s.status === 'reopened')
+  )
+
+  const canFinish = actionable && (
+    stageIsInitial
+      ? finishTargetViewIds.length > 0
+      : allSelectedHaveState &&
+        selectedStates.every(s => s.status === 'in_progress' && s.assigned_user_id === userId)
+  )
+
+  const canBlock = canFinish
 
   const startDisabledReason: string | null = (() => {
     if (isPending) return null
@@ -312,8 +341,14 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
     if (workflowError) return workflowError
     if (viewRounds.length === 0) return 'Could not load active rounds'
     if (!stage) return null
-    if (selectedViewIds.length === 0) return null
+    if (effectiveSelectedViewIds.length === 0) {
+      return stageIsInitial ? 'No views with an active round — create a revision round first' : null
+    }
     if (stageOrderBlock) return stageOrderBlock
+    if (stageIsInitial) {
+      if (startTargetViewIds.length === 0) return 'Nothing to start — every view is already started or done'
+      return null
+    }
     if (!allSelectedHaveState) return 'Stage data still loading'
     if (selectedStates.some(s => s.status === 'done')) return 'Already done'
     if (selectedStates.some(s => s.status === 'blocked')) return 'Blocked — ask admin to unblock'
@@ -322,25 +357,39 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
   })()
 
   const finishDisabledReason: string | null = (() => {
-    if (isPending || viewRounds.length === 0 || roundLoading || !stage || selectedViewIds.length === 0) return null
+    if (isPending || viewRounds.length === 0 || roundLoading || !stage || effectiveSelectedViewIds.length === 0) return null
     if (pendingAction) return `Waiting for ${pendingAction} to finish`
+    if (stageIsInitial) {
+      if (finishTargetViewIds.length === 0 && startTargetViewIds.length > 0) return null
+      if (finishTargetViewIds.length === 0) return 'Nothing in progress assigned to you'
+      return null
+    }
     if (!allSelectedHaveState) return 'Stage data still loading'
     if (selectedStates.some(s => s.status !== 'in_progress')) return 'Start this stage first'
     if (selectedStates.some(s => s.assigned_user_id !== userId)) return 'Assigned to someone else'
     return null
   })()
 
+  const resetTargetViewIds = stageIsInitial
+    ? effectiveSelectedViewIds.filter(id => {
+        const s = getState(id, 'initial')
+        return s && s.status !== 'not_started' && (isAdmin || s.assigned_user_id === userId)
+      })
+    : effectiveSelectedViewIds
+
   const canReset =
     !isPending && !pendingAction && viewRounds.length > 0 && !!stage &&
-    selectedViewIds.length > 0 && allSelectedHaveState &&
-    selectedStates.some(s => s.status !== 'not_started') &&
-    (isAdmin || selectedStates.some(s => s.assigned_user_id === userId))
+    (stageIsInitial
+      ? resetTargetViewIds.length > 0
+      : effectiveSelectedViewIds.length > 0 && allSelectedHaveState &&
+        selectedStates.some(s => s.status !== 'not_started') &&
+        (isAdmin || selectedStates.some(s => s.assigned_user_id === userId)))
 
   const cascadeStages = (() => {
     if (!stage) return [] as typeof STAGE_ORDER
     const idx = STAGE_ORDER.indexOf(stage as StageType)
     return STAGE_ORDER.slice(idx + 1).filter(laterStage =>
-      selectedViewIds.some(viewId => {
+      effectiveSelectedViewIds.some(viewId => {
         const s = getState(viewId, laterStage)
         return s && s.status !== 'not_started'
       })
@@ -379,10 +428,13 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
       return
     }
     setFeedback(null)
-    const snapshot = selectedStates.map(s => ({ id: s.id, status: s.status, assigned_user_id: s.assigned_user_id }))
-    const count = selectedViewIds.length
-    const viewIdsCopy = [...selectedViewIds]
+    const viewIdsCopy = [...startTargetViewIds]
     const stageCopy = stage as StageType
+    const snapshot = viewIdsCopy
+      .map(id => getState(id, stageCopy))
+      .filter((s): s is ViewState => s !== undefined)
+      .map(s => ({ id: s.id, status: s.status, assigned_user_id: s.assigned_user_id }))
+    const count = viewIdsCopy.length
     const etaDateCopy = etaDate || null
     const etaWindowCopy = (etaWindow || null) as TimeWindow | null
 
@@ -427,10 +479,13 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
       return
     }
     setFeedback(null)
-    const snapshot = selectedStates.map(s => ({ id: s.id, status: s.status, assigned_user_id: s.assigned_user_id }))
-    const count = selectedViewIds.length
-    const viewIdsCopy = [...selectedViewIds]
+    const viewIdsCopy = [...finishTargetViewIds]
     const stageCopy = stage as StageType
+    const snapshot = viewIdsCopy
+      .map(id => getState(id, stageCopy))
+      .filter((s): s is ViewState => s !== undefined)
+      .map(s => ({ id: s.id, status: s.status, assigned_user_id: s.assigned_user_id }))
+    const count = viewIdsCopy.length
 
     setStates(prev => prev.map(s =>
       viewIdsCopy.includes(s.project_view_id) && s.stage === stageCopy
@@ -472,9 +527,9 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
     const stageIdx = STAGE_ORDER.indexOf(stage as StageType)
     const stagesToReset = STAGE_ORDER.slice(stageIdx)
     const snapshot = states
-      .filter(s => selectedViewIds.includes(s.project_view_id) && stagesToReset.includes(s.stage))
+      .filter(s => resetTargetViewIds.includes(s.project_view_id) && stagesToReset.includes(s.stage))
       .map(s => ({ id: s.id, status: s.status, assigned_user_id: s.assigned_user_id, block_reason: s.block_reason, latest_eta_date: s.latest_eta_date, latest_eta_time_window: s.latest_eta_time_window }))
-    const viewIdsCopy = [...selectedViewIds]
+    const viewIdsCopy = [...resetTargetViewIds]
     const stageCopy = stage as StageType
 
     setStates(prev => prev.map(s =>
@@ -482,7 +537,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
         ? { ...s, status: 'not_started', assigned_user_id: null, latest_eta_date: null, latest_eta_time_window: null, block_reason: null }
         : s
     ))
-    setShowResetConfirm(false)
+    setPanel('none')
     setPendingViewIds(viewIdsCopy)
     if (stage !== 'initial') setSelectedViewIds([])
     setPendingAction('reset')
@@ -537,9 +592,12 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
       return
     }
     setFeedback(null)
-    const snapshot = selectedStates.map(s => ({ id: s.id, status: s.status, assigned_user_id: s.assigned_user_id }))
-    const viewIdsCopy = [...selectedViewIds]
+    const viewIdsCopy = [...finishTargetViewIds]
     const stageCopy = stage as StageType
+    const snapshot = viewIdsCopy
+      .map(id => getState(id, stageCopy))
+      .filter((s): s is ViewState => s !== undefined)
+      .map(s => ({ id: s.id, status: s.status, assigned_user_id: s.assigned_user_id }))
     const reasonCopy = blockReason
 
     setStates(prev => prev.map(s =>
@@ -572,8 +630,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
     })
   }
 
-  const barVisible = selectedViewIds.length > 0
-  const stageIsInitial = stage === 'initial'
+  const barVisible = effectiveSelectedViewIds.length > 0
 
   if (!projects.length && !hasError) {
     return <EmptyState icon="folder" title="No active projects" sub="An admin needs to create one." />
@@ -591,6 +648,8 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                 const next = e.target.value
                 setProjectId(next)
                 clearSelection()
+                setEtaDate(todayISO())
+                setEtaWindow('')
                 setStage('')
                 setViewFilter('all')
                 setWorkflowError(null)
@@ -625,6 +684,8 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                 const next = e.target.value
                 setProjectId(next)
                 clearSelection()
+                setEtaDate(todayISO())
+                setEtaWindow('')
                 setStage('')
                 setViewFilter('all')
                 setWorkflowError(null)
@@ -880,7 +941,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                 )}
 
                 {/* ETA row */}
-                {!showBlockPanel && !showResetConfirm && (
+                {panel === 'none' && (
                   <div className="flex gap-2">
                     <Input
                       type="date"
@@ -888,11 +949,13 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                       onChange={e => setEtaDate(e.target.value)}
                       className="h-8 flex-1 text-sm"
                       placeholder="ETA date"
+                      aria-label="ETA date"
                     />
                     <Select
                       value={etaWindow}
                       onChange={e => setEtaWindow(e.target.value as TimeWindow)}
                       className="h-8 w-24 text-sm"
+                      aria-label="ETA time window"
                     >
                       <option value="">Time</option>
                       {TIME_WINDOWS.map(w => <option key={w} value={w}>{w}</option>)}
@@ -901,11 +964,12 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                 )}
 
                 {/* Block reason picker */}
-                {showBlockPanel && (
+                {panel === 'block' && (
                   <Select
                     value={blockReason}
                     onChange={e => setBlockReason(e.target.value)}
                     className="border-blocked-text/30 focus:border-blocked-text"
+                    aria-label="Block reason"
                   >
                     <option value="">Select reason…</option>
                     {BLOCK_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
@@ -913,15 +977,15 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                 )}
 
                 {/* Disabled reason hints */}
-                {!showBlockPanel && !showResetConfirm && !canStart && startDisabledReason && selectedViewIds.length > 0 && (
+                {panel === 'none' && !canStart && startDisabledReason && selectedViewIds.length > 0 && (
                   <p className="text-caption text-ink-2">{startDisabledReason}</p>
                 )}
-                {!showBlockPanel && !showResetConfirm && !canFinish && finishDisabledReason && selectedViewIds.length > 0 && (
+                {panel === 'none' && !canFinish && finishDisabledReason && selectedViewIds.length > 0 && (
                   <p className="text-caption text-ink-2">{finishDisabledReason}</p>
                 )}
 
                 {/* Action buttons */}
-                {!showBlockPanel && !showResetConfirm && (
+                {panel === 'none' && (
                   <div className="space-y-2">
                     <div className="flex gap-2">
                       <Button
@@ -947,7 +1011,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                         <Button
                           variant="danger"
                           leftIcon="block"
-                          onClick={() => setShowBlockPanel(true)}
+                          onClick={() => setPanel('block')}
                           disabled={isPending}
                         >
                           Block
@@ -958,7 +1022,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                       <Button
                         variant="ghost"
                         leftIcon="rotate"
-                        onClick={() => setShowResetConfirm(true)}
+                        onClick={() => setPanel('reset')}
                         disabled={isPending}
                         full
                       >
@@ -969,7 +1033,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                 )}
 
                 {/* Block confirm */}
-                {showBlockPanel && (
+                {panel === 'block' && (
                   <div className="flex gap-2">
                     <Button
                       variant="danger"
@@ -982,7 +1046,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                     </Button>
                     <Button
                       variant="ghost"
-                      onClick={() => { setShowBlockPanel(false); setBlockReason('') }}
+                      onClick={() => { setPanel('none'); setBlockReason('') }}
                       disabled={isPending}
                     >
                       Cancel
@@ -991,7 +1055,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                 )}
 
                 {/* Reset confirm */}
-                {showResetConfirm && (
+                {panel === 'reset' && (
                   <div className="space-y-2">
                     <div className="text-caption text-ink-2 space-y-1">
                       <p>
@@ -1015,7 +1079,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                       </Button>
                       <Button
                         variant="ghost"
-                        onClick={() => setShowResetConfirm(false)}
+                        onClick={() => setPanel('none')}
                         disabled={isPending}
                       >
                         Cancel
@@ -1025,7 +1089,7 @@ export function WidgetClient({ projects, userId, userRole, users, hasError }: Wi
                 )}
 
                 {/* ETA hint */}
-                {!showBlockPanel && !showResetConfirm && (
+                {panel === 'none' && (
                   <div className="flex items-center gap-1.5 text-caption text-ink-2">
                     <Icon name="dot" size={10} className="text-accent" />
                     <span>ETA is optional · teammates see this on Today.</span>

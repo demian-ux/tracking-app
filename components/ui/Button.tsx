@@ -105,6 +105,8 @@ export function ButtonLink({
 
 interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   icon: IconName
+  /** Icon-only buttons have no visible text, so an accessible name is required. */
+  'aria-label': string
 }
 
 export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(

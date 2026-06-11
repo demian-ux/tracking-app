@@ -213,12 +213,12 @@ export function ProjectDetailClient({ project, viewRounds, stageStates, views, p
         <Card>
           <div className="flex items-end gap-2 flex-wrap">
             <div className="flex-1 min-w-[140px]">
-              <label className="block text-label font-semibold uppercase text-ink-3 mb-1.5">Delivery date</label>
-              <Input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} />
+              <label className="block text-label font-semibold uppercase text-ink-3 mb-1.5" htmlFor="pd-delivery-date">Delivery date</label>
+              <Input id="pd-delivery-date" type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} />
             </div>
             <div className="flex-1 min-w-[120px]">
-              <label className="block text-label font-semibold uppercase text-ink-3 mb-1.5">Window</label>
-              <Select value={deliveryWindow} onChange={e => setDeliveryWindow(e.target.value as TimeWindow)}>
+              <label className="block text-label font-semibold uppercase text-ink-3 mb-1.5" htmlFor="pd-delivery-window">Window</label>
+              <Select id="pd-delivery-window" value={deliveryWindow} onChange={e => setDeliveryWindow(e.target.value as TimeWindow)}>
                 <option value="">No window</option>
                 {TIME_WINDOWS.map(w => <option key={w} value={w}>{w}</option>)}
               </Select>
@@ -257,6 +257,7 @@ export function ProjectDetailClient({ project, viewRounds, stageStates, views, p
               type="button"
               onClick={() => setNewViewCount(v => Math.max(1, v - 1))}
               disabled={isPending || newViewCount <= 1}
+              aria-label="Decrease view count"
               className="w-8 h-8 flex items-center justify-center rounded-sm border border-line-strong text-ink-2 hover:text-ink hover:border-ink-3 disabled:opacity-30 transition-colors select-none"
             >
               −
@@ -268,6 +269,7 @@ export function ProjectDetailClient({ project, viewRounds, stageStates, views, p
               type="button"
               onClick={() => setNewViewCount(v => v + 1)}
               disabled={isPending}
+              aria-label="Increase view count"
               className="w-8 h-8 flex items-center justify-center rounded-sm border border-line-strong text-ink-2 hover:text-ink hover:border-ink-3 disabled:opacity-30 transition-colors select-none"
             >
               +
