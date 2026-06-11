@@ -41,7 +41,7 @@ export default async function IntegrityPage() {
     )
   }
 
-  const r = data as IntegrityResult
+  const r = data as unknown as IntegrityResult
 
   const totalIssues =
     r.projects_no_views.length +

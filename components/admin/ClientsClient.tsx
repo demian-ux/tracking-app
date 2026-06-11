@@ -135,8 +135,9 @@ export function ClientsClient({ clients: initial }: { clients: ClientRow[] }) {
     setError(null)
     startTransition(async () => {
       const result = await createClient(data)
-      if (result.error) { setError(result.error); return }
-      setClients(prev => [...prev, { ...result.data, projectCount: 0 }])
+      const created = 'data' in result ? result.data : null
+      if (result.error || !created) { setError(result.error ?? 'Create failed'); return }
+      setClients(prev => [...prev, { ...created, projectCount: 0 }])
       setShowCreate(false)
     })
   }
@@ -145,8 +146,9 @@ export function ClientsClient({ clients: initial }: { clients: ClientRow[] }) {
     setError(null)
     startTransition(async () => {
       const result = await updateClient(id, data)
-      if (result.error) { setError(result.error); return }
-      setClients(prev => prev.map(c => c.id === id ? { ...c, ...result.data } : c))
+      const updated = 'data' in result ? result.data : null
+      if (result.error || !updated) { setError(result.error ?? 'Update failed'); return }
+      setClients(prev => prev.map(c => c.id === id ? { ...c, ...updated } : c))
       setEditId(null)
     })
   }

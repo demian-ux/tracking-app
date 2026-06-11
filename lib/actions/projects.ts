@@ -5,7 +5,7 @@ import { revalidateProjectScreens } from '@/lib/utils/revalidate'
 import { requireAdmin } from '@/lib/actions/auth'
 import type { CreateProjectInput } from '@/lib/types/app'
 import { viewLabel, STAGE_ORDER } from '@/lib/types/app'
-import type { TimeWindow, StageType } from '@/lib/types/database'
+import type { TimeWindow, StageType, ProjectStatus } from '@/lib/types/database'
 
 export async function createProject(input: CreateProjectInput) {
   const auth = await requireAdmin()
@@ -179,7 +179,7 @@ export async function deleteProjectPermanently(projectId: string, confirmation: 
   return { data: { deletedName: project.name } }
 }
 
-export async function updateProjectStatus(projectId: string, status: string) {
+export async function updateProjectStatus(projectId: string, status: ProjectStatus) {
   const auth = await requireAdmin()
   if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
   const { user, supabase } = auth.data

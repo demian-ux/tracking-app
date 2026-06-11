@@ -43,8 +43,8 @@ export async function startStage(input: StartStageInput) {
     p_project_id: input.projectId,
     p_view_ids: input.viewIds,
     p_stage: input.stage,
-    p_eta_date: input.etaDate ?? null,
-    p_eta_time_window: input.etaTimeWindow ?? null,
+    p_eta_date: input.etaDate ?? undefined,
+    p_eta_time_window: input.etaTimeWindow ?? undefined,
   })
 
   if (error) return { error: rpcErrorToString(error) }
@@ -82,7 +82,7 @@ export async function finishStage(input: FinishStageInput) {
 export async function blockStage(
   projectId: string,
   viewIds: string[],
-  stage: string,
+  stage: StageType,
   reason: string,
 ) {
   const auth = await requireWorker()
@@ -134,7 +134,7 @@ export async function resetStage(
 export async function unblockStage(
   projectId: string,
   viewId: string,
-  stage: string,
+  stage: StageType,
 ) {
   const auth = await requireAdmin()
   if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
@@ -178,7 +178,7 @@ export async function unblockStage(
     project_id: projectId,
     project_view_round_id: activeRound.id,
     project_view_id: viewId,
-    stage: stage as StageType,
+    stage,
     event_type: 'stage_unblocked' as const,
     actor_id: user.id,
   })
@@ -190,7 +190,7 @@ export async function unblockStage(
 export async function reopenStage(
   projectId: string,
   viewId: string,
-  stage: string,
+  stage: StageType,
 ) {
   const auth = await requireAdmin()
   if (auth.error || !auth.data) return { error: auth.error ?? 'Auth error' }
@@ -232,7 +232,7 @@ export async function reopenStage(
     project_id: projectId,
     project_view_round_id: activeRound.id,
     project_view_id: viewId,
-    stage: stage as StageType,
+    stage,
     event_type: 'stage_reopened' as const,
     actor_id: user.id,
   })
@@ -250,7 +250,14 @@ export async function undoStageAction(
   const { supabase } = auth.data
 
   const results = await Promise.all(restores.map(r => {
-    const update: Record<string, unknown> = {
+    const update: {
+      status: StageStatus
+      assigned_user_id: string | null
+      started_at?: null
+      completed_at?: null
+      latest_eta_date?: null
+      latest_eta_time_window?: null
+    } = {
       status: r.status as StageStatus,
       assigned_user_id: r.assigned_user_id,
     }

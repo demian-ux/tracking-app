@@ -6,7 +6,7 @@ import type { IncompleteItem } from '@/lib/actions/delivery'
 import { updateProjectDates, updateProjectStatus, updateProjectViewCount } from '@/lib/actions/projects'
 import { unblockStage } from '@/lib/actions/stages'
 import type { Project, ProjectViewRound } from '@/lib/types/app'
-import type { TimeWindow, StageType } from '@/lib/types/database'
+import type { TimeWindow, StageType, ProjectStatus } from '@/lib/types/database'
 import { TIME_WINDOWS, STAGE_LABELS, ACTIVE_PROJECT_STATUSES, PROJECT_STATUS_LABELS } from '@/lib/types/app'
 import { formatDelivery, deliveryLabel } from '@/lib/utils/formatting'
 import { ProgressBar } from '@/components/ui/ProgressBar'
@@ -156,7 +156,7 @@ export function ProjectDetailClient({ project, viewRounds, stageStates, views, p
     })
   }
 
-  function handleSetStatus(status: string) {
+  function handleSetStatus(status: ProjectStatus) {
     if (status === project.status || isPending) return
     startTransition(async () => {
       const result = await updateProjectStatus(project.id, status)
