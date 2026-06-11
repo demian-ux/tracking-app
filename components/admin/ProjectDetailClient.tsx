@@ -422,6 +422,29 @@ export function ProjectDetailClient({ project, viewRounds, stageStates, views, p
             Revision
           </SectionLabel>
           <Card>
+            {(() => {
+              const revisableIds = deliveredViews.map(v => v.id)
+              const allSelected = revisableIds.length > 0 && revisableIds.every(id => viewsToRevise.includes(id))
+              if (revisableIds.length === 0) return null
+              return (
+                <div className="flex items-center justify-end mb-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (allSelected) {
+                        setViewsToRevise(prev => prev.filter(id => !revisableIds.includes(id)))
+                      } else {
+                        setViewsToRevise(prev => Array.from(new Set([...prev, ...revisableIds])))
+                      }
+                    }}
+                    disabled={isPending}
+                    className="text-label font-semibold uppercase text-ink-2 hover:text-ink transition-colors px-2 py-0.5 border border-line rounded-sm hover:border-line-strong"
+                  >
+                    {allSelected ? 'Clear all' : `Select all (${revisableIds.length})`}
+                  </button>
+                </div>
+              )
+            })()}
             <div className="space-y-2 mb-3">
               {deliveredViews.map(view => {
                 const latestRound = viewRounds
